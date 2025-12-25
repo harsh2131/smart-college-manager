@@ -1,0 +1,627 @@
+# Technical Design Document
+## Smart College Resource, Attendance & Deadline Manager
+
+---
+
+## 1️⃣ Tech Stack (Fixed)
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Frontend** | Angular 17+ | SPA with reactive forms, routing, guards |
+| **Backend** | Node.js + Express.js | RESTful API server |
+| **Database** | MongoDB + Mongoose | Document-based storage with schema validation |
+| **Authentication** | JWT (JSON Web Token) | Stateless auth with role-based access |
+| **Password Security** | bcrypt | Password hashing |
+| **Notifications** | node-cron + nodemailer | Scheduled alerts & email digests |
+
+### Role Hierarchy
+
+```
+┌─────────────────────────────────────────────────────┐
+│                      ROLES                          │
+├─────────────────────────────────────────────────────┤
+│  admin (faculty/HOD)                                │
+│  ├── Can mark attendance                            │
+│  ├── Can upload resources                           │
+│  ├── Can create deadlines                           │
+│  ├── Can enter marks                                │
+│  ├── Can view all students' data                    │
+│  └── Can broadcast announcements                    │
+├─────────────────────────────────────────────────────┤
+│  student                                            │
+│  ├── Can view own attendance                        │
+│  ├── Can view own marks                             │
+│  ├── Can view/download resources                    │
+│  ├── Can view deadlines                             │
+│  └── Can update own profile                         │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2️⃣ Core Entities (MongoDB Schemas)
+
+### 📘 User Schema
+
+> Unified schema for both students and admins (role-based differentiation)
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `userId` | String | unique, required | Custom ID (e.g., "STU2024001") |
+| `name` | String | required | Full name |
+| `email` | String | unique, required, regex validated | College email |
+| `passwordHash` | String | required | bcrypt hashed password |
+| `role` | String | enum: ['student', 'admin'] | User role |
+| `semester` | Number | required for students | Current semester (1-8) |
+| `division` | String | required for students | e.g., "A", "B", "C" |
+| `department` | String | required | e.g., "CSE", "ECE", "ME" |
+| `subjects` | [ObjectId] | ref: 'Subject' | Enrolled/assigned subjects |
+| `createdAt` | Date | auto | Account creation timestamp |
+| `updatedAt` | Date | auto | Last update timestamp |
+
+```
+Indexes:
+  - email (unique)
+  - userId (unique)
+  - { role, department, semester } (compound, for queries)
+```
+
+---
+
+### 📗 Subject Schema
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `subjectCode` | String | unique, required | e.g., "CS301" |
+| `subjectName` | String | required | e.g., "Database Management Systems" |
+| `semester` | Number | required | Which semester this subject belongs to |
+| `department` | String | required | e.g., "CSE" |
+| `totalLecturesPlanned` | Number | required | Total planned lectures for semester |
+| `lecturesConducted` | Number | default: 0 | Running count of conducted lectures |
+| `minAttendancePercent` | Number | default: 75 | Minimum required attendance % |
+| `internalMaxMarks` | Number | default: 30 | Maximum internal assessment marks |
+| `internalPassMarks` | Number | default: 12 | Minimum to pass internal (40% typically) |
+| `createdBy` | ObjectId | ref: 'User' | Faculty who created it |
+| `createdAt` | Date | auto | Creation timestamp |
+
+```
+Indexes:
+  - subjectCode (unique)
+  - { department, semester } (compound)
+```
+
+---
+
+### 📙 Attendance Schema
+
+> **Critical Design Decision**: Each document = ONE student's attendance for ONE lecture
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `studentId` | ObjectId | ref: 'User', required | Student reference |
+| `subjectId` | ObjectId | ref: 'Subject', required | Subject reference |
+| `date` | Date | required | Lecture date |
+| `lectureNumber` | Number | required | Which lecture of the day (1, 2, 3...) |
+| `status` | String | enum: ['present', 'absent'] | Attendance status |
+| `markedBy` | ObjectId | ref: 'User' | Faculty who marked |
+| `markedAt` | Date | auto | Timestamp of marking |
+
+```
+Indexes:
+  - { studentId, subjectId, date, lectureNumber } (compound unique) 
+    → Prevents duplicate entries for same lecture
+
+  - { subjectId, date } (for batch queries)
+  - { studentId, subjectId } (for student's subject attendance)
+```
+
+#### 📊 Attendance Calculation Formula
+
+```javascript
+// For a specific student in a specific subject:
+
+presentCount = count of documents where status === 'present'
+totalConducted = Subject.lecturesConducted  // OR count all attendance records
+
+attendancePercentage = (presentCount / totalConducted) * 100
+
+// Example:
+// Student A in DBMS: 36 present out of 48 conducted
+// Attendance = (36 / 48) * 100 = 75%
+```
+
+#### ⚠️ Attendance Warning Thresholds
+
+| Condition | Alert Level | Message |
+|-----------|-------------|---------|
+| `percentage >= 85%` | ✅ Safe | "Excellent attendance!" |
+| `percentage >= 75% && < 85%` | 🟡 Moderate | "Good, but stay consistent" |
+| `percentage >= minRequired && < 75%` | 🟠 Warning | "Caution: Close to minimum!" |
+| `percentage < minRequired` | 🔴 Critical | "Alert: Below required attendance!" |
+
+#### 🧮 "Safe to Bunk" Calculator
+
+```javascript
+// Calculate how many more lectures can be missed while staying at minRequired%
+
+canMiss = floor(
+  (presentCount - (minRequired/100 * totalConducted)) / (minRequired/100)
+)
+
+// If presentCount = 36, totalConducted = 48, minRequired = 75%
+// canMiss = floor((36 - 0.75*48) / 0.75) = floor((36-36)/0.75) = 0
+// Student is EXACTLY at threshold, cannot miss any more
+```
+
+---
+
+### 📕 Marks Schema (Internal Assessment)
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `studentId` | ObjectId | ref: 'User', required | Student reference |
+| `subjectId` | ObjectId | ref: 'Subject', required | Subject reference |
+| `testType` | String | enum: see below | Type of assessment |
+| `testName` | String | required | e.g., "Unit Test 1", "Assignment 3" |
+| `marksObtained` | Number | required, min: 0 | Marks scored |
+| `maxMarks` | Number | required, min: 1 | Maximum possible marks |
+| `date` | Date | required | Assessment date |
+| `enteredBy` | ObjectId | ref: 'User' | Faculty who entered marks |
+| `createdAt` | Date | auto | Entry timestamp |
+
+**Test Types Enum:**
+- `unit-test` — Mid-semester unit tests
+- `assignment` — Homework/project submissions  
+- `practical` — Lab assessments
+- `quiz` — In-class quizzes
+- `presentation` — Seminar/presentation marks
+- `viva` — Oral examination
+
+```
+Indexes:
+  - { studentId, subjectId, testType, testName } (compound unique)
+    → Prevents duplicate entries for same assessment
+  - { subjectId, testType } (for class-wide analysis)
+```
+
+#### 📊 Internal Marks Calculation
+
+```javascript
+// For a specific student in a specific subject:
+
+totalObtained = sum of all marksObtained
+totalMaxMarks = sum of all maxMarks
+
+rawPercentage = (totalObtained / totalMaxMarks) * 100
+
+// Convert to internal out of internalMaxMarks (e.g., 30):
+internalMarks = (rawPercentage / 100) * internalMaxMarks
+
+// Example:
+// Student scored: Quiz(8/10) + UT1(15/20) + Assignment(17/20) = 40/50
+// rawPercentage = 80%
+// If internalMaxMarks = 30, then internalMarks = 0.8 * 30 = 24/30
+```
+
+---
+
+### ⏰ Deadline Schema
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `title` | String | required | e.g., "DBMS Assignment 3 - ER Diagrams" |
+| `description` | String | optional | Detailed instructions |
+| `subjectId` | ObjectId | ref: 'Subject', required | Subject reference |
+| `type` | String | enum: see below | Deadline type |
+| `dueDate` | Date | required | Submission deadline |
+| `dueTime` | String | default: "23:59" | Time of day (HH:mm) |
+| `attachments` | [String] | optional | URLs to attached files |
+| `appliesTo` | Object | required | Target audience |
+| `createdBy` | ObjectId | ref: 'User' | Faculty who created |
+| `createdAt` | Date | auto | Creation timestamp |
+
+**Deadline Types Enum:**
+- `assignment` — Homework/project
+- `exam` — Unit test / internal exam
+- `practical` — Lab submission
+- `project` — Major project milestone
+- `presentation` — Seminar/demo
+
+**AppliesTo Object Structure:**
+```javascript
+appliesTo: {
+  semester: Number,      // e.g., 5
+  division: String,      // e.g., "A" or "all"
+  department: String     // e.g., "CSE"
+}
+```
+
+```
+Indexes:
+  - { dueDate: 1 } (for sorting by urgency)
+  - { subjectId, dueDate } (for subject-wise deadlines)
+  - { "appliesTo.semester", "appliesTo.division" } (for filtering)
+```
+
+#### 📊 Deadline Status (Computed, Not Stored)
+
+```javascript
+// Computed on-the-fly based on current date:
+
+function getDeadlineStatus(dueDate) {
+  const today = new Date().setHours(0, 0, 0, 0);
+  const due = new Date(dueDate).setHours(0, 0, 0, 0);
+  const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) return { status: 'missed', label: '🔴 Missed' };
+  if (diffDays === 0) return { status: 'due-today', label: '🟠 Due Today' };
+  if (diffDays <= 3) return { status: 'urgent', label: '🟡 Due Soon' };
+  return { status: 'upcoming', label: '🟢 Upcoming' };
+}
+```
+
+---
+
+### 📁 Resource Schema
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `title` | String | required | e.g., "Unit 3 - Normalization Notes" |
+| `description` | String | optional | Brief description |
+| `subjectId` | ObjectId | ref: 'Subject', required | Subject reference |
+| `unit` | Number | optional | Unit number (1-5) |
+| `topic` | String | optional | Specific topic name |
+| `fileUrl` | String | required | URL to stored file |
+| `fileType` | String | enum: ['pdf', 'ppt', 'doc', 'video', 'link'] | File type |
+| `fileSize` | Number | optional | Size in bytes |
+| `tags` | [String] | optional | Search tags |
+| `isPYQ` | Boolean | default: false | Is this a Previous Year Question paper? |
+| `year` | Number | optional | Year (for PYQs) |
+| `uploadedBy` | ObjectId | ref: 'User' | Faculty who uploaded |
+| `uploadedAt` | Date | auto | Upload timestamp |
+| `downloadCount` | Number | default: 0 | Track popularity |
+
+```
+Indexes:
+  - { subjectId, unit } (for organized browsing)
+  - { tags: 1 } (for search)
+  - { isPYQ: 1, subjectId: 1, year: -1 } (for PYQ queries)
+```
+
+---
+
+### 🔔 Notification Schema
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `_id` | ObjectId | auto-generated | MongoDB default ID |
+| `userId` | ObjectId | ref: 'User', required | Recipient |
+| `type` | String | enum: see below | Notification type |
+| `title` | String | required | Notification heading |
+| `message` | String | required | Notification body |
+| `relatedEntity` | Object | optional | Reference to related item |
+| `isRead` | Boolean | default: false | Read status |
+| `createdAt` | Date | auto | Creation timestamp |
+
+**Notification Types:**
+- `attendance-warning` — Low attendance alert
+- `deadline-reminder` — Upcoming deadline
+- `marks-published` — New marks available
+- `resource-uploaded` — New study material
+- `announcement` — General announcement
+
+```
+Indexes:
+  - { userId, isRead, createdAt: -1 } (for user's unread notifications)
+```
+
+---
+
+## 3️⃣ Backend Responsibilities
+
+### ✅ Validation Rules
+
+| Entity | Validation | Error Response |
+|--------|-----------|----------------|
+| Attendance | No duplicate (student + subject + date + lectureNo) | "Attendance already marked for this lecture" |
+| Attendance | LectureNumber ≤ Subject.lecturesConducted + 1 | "Invalid lecture number" |
+| Marks | marksObtained ≤ maxMarks | "Marks cannot exceed maximum" |
+| Marks | No duplicate (student + subject + testType + testName) | "Marks already entered for this assessment" |
+| Deadline | dueDate ≥ today | "Deadline must be in the future" |
+| User | Email format + uniqueness | "Invalid/duplicate email" |
+
+### 📊 Auto-Calculations (Backend Computed)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    AUTO-CALCULATED FIELDS                      │
+├────────────────────────────────────────────────────────────────┤
+│  attendancePercentage                                          │
+│  └── Recalculated on every GET /attendance/:studentId/:subjectId
+│  └── Formula: (presentCount / totalConducted) * 100            │
+├────────────────────────────────────────────────────────────────┤
+│  internalPercentage                                            │
+│  └── Recalculated on every GET /marks/:studentId/:subjectId    │
+│  └── Formula: (sumObtained / sumMaxMarks) * 100                │
+├────────────────────────────────────────────────────────────────┤
+│  deadlineStatus                                                │
+│  └── Computed in response (not stored)                         │
+│  └── Based on: dueDate vs currentDate                          │
+├────────────────────────────────────────────────────────────────┤
+│  canMissLectures                                               │
+│  └── Computed on dashboard fetch                               │
+│  └── Shows "safe bunk" count                                   │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### ⚠️ Warning Triggers (Cron Jobs / On-Demand)
+
+| Trigger | Condition | Action |
+|---------|-----------|--------|
+| **Attendance Warning** | `attendancePercentage < minRequired` | Create notification, optional email |
+| **Attendance Danger** | `attendancePercentage < minRequired - 5%` | High priority alert |
+| **Internal Warning** | `internalPercentage < 40%` | Create notification |
+| **Deadline Approaching** | `dueDate - today <= 3 days` | Daily reminder notification |
+| **Deadline Due Today** | `dueDate === today` | Morning push notification |
+| **Deadline Missed** | `dueDate < today` (first time) | One-time "Missed" notification |
+
+### 🔐 Role-Based Access Control (RBAC)
+
+```javascript
+// Middleware: verifyRole('admin') or verifyRole('student')
+
+const permissions = {
+  admin: [
+    'attendance:mark',
+    'attendance:view-all',
+    'marks:create',
+    'marks:update',
+    'marks:view-all',
+    'deadline:create',
+    'deadline:update',
+    'deadline:delete',
+    'resource:upload',
+    'resource:delete',
+    'user:view-all',
+    'analytics:view-all',
+    'announcement:create'
+  ],
+  student: [
+    'attendance:view-own',
+    'marks:view-own',
+    'deadline:view',
+    'resource:view',
+    'resource:download',
+    'profile:update-own',
+    'notification:view-own'
+  ]
+};
+```
+
+---
+
+## 4️⃣ API Planning (Endpoints)
+
+### 🔐 Authentication APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/auth/register` | Register new user | Public (or Admin-only) |
+| POST | `/api/auth/login` | Login & receive JWT | Public |
+| POST | `/api/auth/logout` | Invalidate token (client-side) | Authenticated |
+| GET | `/api/auth/me` | Get current user profile | Authenticated |
+| PUT | `/api/auth/change-password` | Update password | Authenticated |
+| POST | `/api/auth/forgot-password` | Request password reset | Public |
+| POST | `/api/auth/reset-password` | Reset with token | Public |
+
+---
+
+### 📊 Attendance APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/attendance/mark` | Mark attendance (single/batch) | Admin |
+| GET | `/api/attendance/student/:studentId` | Get all attendance for a student | Student (own) / Admin |
+| GET | `/api/attendance/student/:studentId/subject/:subjectId` | Get subject-wise attendance | Student (own) / Admin |
+| GET | `/api/attendance/subject/:subjectId/date/:date` | Get class attendance for a date | Admin |
+| GET | `/api/attendance/summary/:studentId` | Attendance summary with percentages | Student (own) / Admin |
+| PUT | `/api/attendance/:id` | Update attendance record | Admin |
+| DELETE | `/api/attendance/:id` | Delete attendance record | Admin |
+
+---
+
+### 📝 Marks APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/marks/create` | Enter marks (single/batch) | Admin |
+| GET | `/api/marks/student/:studentId` | Get all marks for a student | Student (own) / Admin |
+| GET | `/api/marks/student/:studentId/subject/:subjectId` | Get subject-wise marks | Student (own) / Admin |
+| GET | `/api/marks/subject/:subjectId/test/:testType` | Get class marks for a test | Admin |
+| GET | `/api/marks/summary/:studentId` | Internal marks summary | Student (own) / Admin |
+| PUT | `/api/marks/:id` | Update marks entry | Admin |
+| DELETE | `/api/marks/:id` | Delete marks entry | Admin |
+
+---
+
+### ⏰ Deadline APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/deadlines/create` | Create new deadline | Admin |
+| GET | `/api/deadlines` | Get all deadlines (with filters) | Authenticated |
+| GET | `/api/deadlines/upcoming` | Get upcoming deadlines (next 7 days) | Authenticated |
+| GET | `/api/deadlines/subject/:subjectId` | Get deadlines for a subject | Authenticated |
+| GET | `/api/deadlines/:id` | Get deadline details | Authenticated |
+| PUT | `/api/deadlines/:id` | Update deadline | Admin |
+| DELETE | `/api/deadlines/:id` | Delete deadline | Admin |
+
+---
+
+### 📚 Resource APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/resources/upload` | Upload resource file | Admin |
+| GET | `/api/resources` | Get all resources (with filters) | Authenticated |
+| GET | `/api/resources/subject/:subjectId` | Get resources for a subject | Authenticated |
+| GET | `/api/resources/pyq/:subjectId` | Get PYQs for a subject | Authenticated |
+| GET | `/api/resources/:id` | Get resource details | Authenticated |
+| GET | `/api/resources/:id/download` | Download resource file | Authenticated |
+| PUT | `/api/resources/:id` | Update resource metadata | Admin |
+| DELETE | `/api/resources/:id` | Delete resource | Admin |
+
+---
+
+### 📊 Analytics & Dashboard APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| GET | `/api/analytics/student/:studentId` | Complete student dashboard | Student (own) / Admin |
+| GET | `/api/analytics/student/:studentId/warnings` | Get active warnings | Student (own) / Admin |
+| GET | `/api/analytics/class/:subjectId` | Class-wide analytics | Admin |
+| GET | `/api/analytics/at-risk` | Students below thresholds | Admin |
+| GET | `/api/analytics/department/:dept` | Department overview | Admin |
+
+---
+
+### 📖 Subject APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/subjects/create` | Create new subject | Admin |
+| GET | `/api/subjects` | Get all subjects (with filters) | Authenticated |
+| GET | `/api/subjects/:id` | Get subject details | Authenticated |
+| PUT | `/api/subjects/:id` | Update subject | Admin |
+| PUT | `/api/subjects/:id/increment-lecture` | Increment lecturesConducted | Admin |
+| DELETE | `/api/subjects/:id` | Delete subject | Admin |
+
+---
+
+### 🔔 Notification APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| GET | `/api/notifications` | Get user's notifications | Authenticated |
+| GET | `/api/notifications/unread` | Get unread count | Authenticated |
+| PUT | `/api/notifications/:id/read` | Mark as read | Authenticated |
+| PUT | `/api/notifications/read-all` | Mark all as read | Authenticated |
+| POST | `/api/notifications/announce` | Broadcast announcement | Admin |
+
+---
+
+### 👤 User Management APIs
+
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| GET | `/api/users` | Get all users (with filters) | Admin |
+| GET | `/api/users/:id` | Get user details | Admin / Self |
+| PUT | `/api/users/:id` | Update user profile | Admin / Self (limited) |
+| DELETE | `/api/users/:id` | Delete user | Admin |
+| POST | `/api/users/bulk-create` | Bulk create students | Admin |
+| GET | `/api/users/by-semester/:sem` | Get students by semester | Admin |
+
+---
+
+## 5️⃣ Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    USER ||--o{ ATTENDANCE : "has"
+    USER ||--o{ MARKS : "has"
+    USER ||--o{ NOTIFICATION : "receives"
+    USER }o--o{ SUBJECT : "enrolled/teaches"
+    
+    SUBJECT ||--o{ ATTENDANCE : "for"
+    SUBJECT ||--o{ MARKS : "for"
+    SUBJECT ||--o{ DEADLINE : "has"
+    SUBJECT ||--o{ RESOURCE : "has"
+    
+    USER ||--o{ DEADLINE : "creates"
+    USER ||--o{ RESOURCE : "uploads"
+    
+    USER {
+        ObjectId _id
+        string userId
+        string name
+        string email
+        string passwordHash
+        string role
+        number semester
+        string division
+        string department
+    }
+    
+    SUBJECT {
+        ObjectId _id
+        string subjectCode
+        string subjectName
+        number semester
+        number lecturesConducted
+        number minAttendancePercent
+    }
+    
+    ATTENDANCE {
+        ObjectId _id
+        ObjectId studentId
+        ObjectId subjectId
+        date date
+        number lectureNumber
+        string status
+    }
+    
+    MARKS {
+        ObjectId _id
+        ObjectId studentId
+        ObjectId subjectId
+        string testType
+        number marksObtained
+        number maxMarks
+    }
+    
+    DEADLINE {
+        ObjectId _id
+        string title
+        ObjectId subjectId
+        string type
+        date dueDate
+    }
+    
+    RESOURCE {
+        ObjectId _id
+        string title
+        ObjectId subjectId
+        string fileUrl
+        string fileType
+    }
+    
+    NOTIFICATION {
+        ObjectId _id
+        ObjectId userId
+        string type
+        string title
+        boolean isRead
+    }
+```
+
+---
+
+## Summary
+
+| Aspect | Decision |
+|--------|----------|
+| **Auth Strategy** | JWT with bcrypt password hashing |
+| **Roles** | `student` and `admin` (includes faculty/HOD) |
+| **Attendance Storage** | Per-lecture records (not aggregated totals) |
+| **Percentage Calculation** | Server-side, on-demand (not stored) |
+| **Deadline Status** | Computed field, not stored |
+| **Duplicate Prevention** | Compound unique indexes |
+| **Warning System** | Cron jobs + on-demand triggers |
+
+> **Next Step**: With schemas finalized, proceed to create the actual folder structure and implement Mongoose models in code.

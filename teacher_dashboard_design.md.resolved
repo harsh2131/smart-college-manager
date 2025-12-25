@@ -1,0 +1,1217 @@
+# Teacher Dashboard Module Design
+## Smart College Resource & Deadline Manager
+
+---
+
+## 1️⃣ Teacher Authentication & Authorization Flow
+
+### JWT-Based Authentication Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      AUTHENTICATION FLOW                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+STEP 1: Teacher Login
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Angular Login   │────▶│  POST /auth/login │────▶│  Validate creds  │
+│  Form            │     │  {email, password}│     │  in MongoDB      │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+                                                           │
+                                                           ▼
+                         ┌─────────────────────────────────────────────┐
+                         │  Generate JWT Token                         │
+                         │  Payload: { userId, email, role: 'teacher' }│
+                         │  Expiry: 24 hours                           │
+                         └─────────────────────────────────────────────┘
+                                                           │
+                                                           ▼
+┌──────────────────┐     ┌──────────────────────────────────────────────┐
+│  Store in        │◀────│  Response: { token, user: {...}, expiresIn } │
+│  localStorage    │     └──────────────────────────────────────────────┘
+└──────────────────┘
+
+STEP 2: Authenticated Requests
+┌──────────────────┐     ┌──────────────────────────────────────────────┐
+│  Angular HTTP    │────▶│  Headers: { Authorization: 'Bearer <TOKEN>' }│
+│  Interceptor     │     └──────────────────────────────────────────────┘
+└──────────────────┘
+```
+
+### JWT Token Structure
+
+```javascript
+// Token Payload
+{
+  "userId": "TCH_001",
+  "email": "sharma@college.edu",
+  "role": "teacher",
+  "department": "CSE",
+  "iat": 1703500000,      // Issued at
+  "exp": 1703586400       // Expires in 24h
+}
+```
+
+### Role-Based Authorization Middleware
+
+```javascript
+// Backend middleware chain for teacher routes
+router.use('/teacher/*', [
+  authMiddleware,           // Verify JWT is valid
+  roleMiddleware('teacher') // Check role === 'teacher'
+]);
+
+// authMiddleware.js
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;  // Attach user to request
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// roleMiddleware.js
+function roleMiddleware(...allowedRoles) {
+  return (req, res, next) => {
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    next();
+  };
+}
+```
+
+### Angular Auth Guard
+
+```typescript
+// teacher.guard.ts
+@Injectable({ providedIn: 'root' })
+export class TeacherGuard implements CanActivate {
+  constructor(private authService: AuthService, private router: Router) {}
+
+  canActivate(): boolean {
+    const user = this.authService.getCurrentUser();
+    if (user && user.role === 'teacher') {
+      return true;
+    }
+    this.router.navigate(['/login']);
+    return false;
+  }
+}
+```
+
+---
+
+## 2️⃣ Teacher Dashboard Features
+
+### Feature Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  👩‍🏫 TEACHER DASHBOARD                                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐        │
+│  │  📚 Manage  │ │  👥 Assign  │ │  📋 Mark    │ │  📝 Enter   │        │
+│  │  Subjects   │ │  Students   │ │  Attendance │ │  Marks      │        │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘        │
+│                                                                         │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐        │
+│  │  ⏰ Create  │ │  📤 Upload  │ │  📊 View    │ │  🚨 At-Risk │        │
+│  │  Deadlines  │ │  Resources  │ │  Analytics  │ │  Students   │        │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘        │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Feature A: Subject Management (CRUD)
+
+#### Create Subject
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ➕ CREATE SUBJECT                                          │
+├─────────────────────────────────────────────────────────────┤
+│  Subject Code*:    [CS301           ]                       │
+│  Subject Name*:    [Database Management Systems]            │
+│  Department*:      [CSE             ▼]                      │
+│  Semester*:        [5               ▼]                      │
+│  Credits:          [4               ]                       │
+│                                                             │
+│  ─── ATTENDANCE SETTINGS ───                                │
+│  Total Planned Lectures:  [60      ]                        │
+│  Minimum Attendance %*:   [75      ]  (for eligibility)     │
+│                                                             │
+│  ─── MARKS SETTINGS ───                                     │
+│  Internal Max Marks:      [30      ]                        │
+│  Practical Max Marks:     [20      ]                        │
+│  External Max Marks:      [50      ]                        │
+│                                                             │
+│  Divisions to Apply:  [☑ A] [☑ B] [☐ C]                     │
+│                                                             │
+│  [Cancel]                              [Create Subject →]   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Update Subject
+- Teacher can modify: subject name, min attendance %, marks distribution
+- Cannot modify: subject code (primary identifier)
+
+#### Delete Subject
+- Soft delete (mark as inactive) rather than hard delete
+- Preserves historical attendance and marks data
+
+---
+
+### Feature B: Assign Students to Subjects
+
+#### Assignment Interface
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  👥 ASSIGN STUDENTS TO SUBJECT                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Subject: [DBMS - CS301, Sem 5  ▼]                                      │
+│                                                                         │
+│  Filter Students By:                                                    │
+│  Division: [( ) A  (•) B  ( ) C  ( ) All]                               │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  ☑ Select All (48 students)                                      │   │
+│  │  ──────────────────────────────────────────────────────────────  │   │
+│  │  [☑] CS5B001  Rahul Patel                                        │   │
+│  │  [☑] CS5B002  Priya Shah                                         │   │
+│  │  [☑] CS5B003  Amit Kumar                                         │   │
+│  │  [☐] CS5B004  Sneha Desai  (Already enrolled in another batch)   │   │
+│  │  ...                                                             │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Selected: 47 students                                                  │
+│  [Cancel]                                      [Assign Students →]      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Auto-Assignment Option
+- When creating subject, auto-enroll all students of selected semester/division
+
+---
+
+### Feature C: Attendance Upload (Daily/Lecture-wise)
+
+#### Attendance Marking Interface
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📋 MARK ATTENDANCE                                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Subject:  [DBMS - CS301      ▼]                                        │
+│  Date:     [Dec 25, 2024      📅]                                       │
+│  Lecture:  [Lecture 49 of 60   ]  (auto-incremented)                    │
+│  Topic:    [Normalization - BCNF (optional)]                            │
+│                                                                         │
+│  ─── QUICK ACTIONS ───                                                  │
+│  [✓ Mark All Present]  [✗ Mark All Absent]  [↻ Reset]                   │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────┐     │
+│  │  Roll No   │ Name            │ Status     │ Current % │ Flag   │     │
+│  │  ─────────────────────────────────────────────────────────────  │     │
+│  │  CS5B001   │ Rahul Patel     │ [P] [A]    │  68% 🔴   │ ⚠️     │     │
+│  │  CS5B002   │ Priya Shah      │ [P] [A]    │  85% 🟢   │        │     │
+│  │  CS5B003   │ Amit Kumar      │ [P] [A]    │  72% 🟡   │        │     │
+│  │  CS5B004   │ Sneha Desai     │ [P] [A]    │  90% 🟢   │        │     │
+│  │  ...       │                 │            │           │        │     │
+│  └────────────────────────────────────────────────────────────────┘     │
+│                                                                         │
+│  Summary: 45 Present | 3 Absent | 48 Total                              │
+│                                                                         │
+│  [Cancel]                                          [Submit Attendance]  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Attendance Update/Edit
+- Teacher can edit past attendance within 7-day window
+- Audit log maintained for all changes
+
+---
+
+### Feature D: Marks Upload (Internal, Practical, External)
+
+#### Marks Entry Interface
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  📝 ENTER MARKS                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Subject:    [DBMS - CS301      ▼]                                      │
+│  Test Type:  [( ) Internal  ( ) Practical  ( ) External]                │
+│                                                                         │
+│  ─── TEST DETAILS ───                                                   │
+│  Test Name:  [Unit Test 1            ]                                  │
+│  Max Marks:  [20                     ]                                  │
+│  Date:       [Dec 15, 2024           ]                                  │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────┐     │
+│  │  Roll No   │ Name            │ Marks (out of 20) │ Status      │     │
+│  │  ─────────────────────────────────────────────────────────────  │     │
+│  │  CS5B001   │ Rahul Patel     │ [14           ]   │ ✓ Valid     │     │
+│  │  CS5B002   │ Priya Shah      │ [18           ]   │ ✓ Valid     │     │
+│  │  CS5B003   │ Amit Kumar      │ [25           ]   │ ✗ Exceeds!  │     │
+│  │  CS5B004   │ Sneha Desai     │ [AB           ]   │ Absent      │     │
+│  │  ...       │                 │                   │             │     │
+│  └────────────────────────────────────────────────────────────────┘     │
+│                                                                         │
+│  [Import from CSV]  [Download Template]                                 │
+│                                                                         │
+│  [Cancel]                                              [Submit Marks]   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Marks Categories
+| Category | Components | Typical Weight |
+|----------|-----------|---------------|
+| **Internal** | Assignments, Quizzes, Unit Tests | 30 marks |
+| **Practical** | Lab work, Experiments, Viva | 20 marks |
+| **External** | Final Exam (university) | 50 marks |
+
+---
+
+### Feature E: Minimum Attendance Setting
+
+#### Per-Subject Configuration
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ⚙️ ATTENDANCE ELIGIBILITY SETTINGS - DBMS (CS301)         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Minimum Required Attendance: [75    ]%                     │
+│                                                             │
+│  Eligibility Thresholds:                                    │
+│  ├── ≥ 75%  →  ✅ Allowed for exam                          │
+│  ├── 65-74% →  ⚠️ Condonation eligible (with penalty)       │
+│  └── < 65%  →  ❌ Detained / Not allowed                    │
+│                                                             │
+│  Auto-Warning Settings:                                     │
+│  [☑] Send warning when student drops below 80%              │
+│  [☑] Send critical alert when student drops below 75%       │
+│  [☑] Notify HOD for detained students                       │
+│                                                             │
+│  [Save Settings]                                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Feature F: Deadline Management
+
+#### Create Deadline Interface
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ⏰ CREATE DEADLINE                                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Subject:      [DBMS - CS301              ▼]                            │
+│  Title*:       [Assignment 3 - ER Diagram   ]                           │
+│                                                                         │
+│  Type:  ( ) Assignment  ( ) Exam  ( ) Project  ( ) Quiz  ( ) Other      │
+│                                                                         │
+│  Due Date*:    [Dec 30, 2024    📅]                                     │
+│  Due Time*:    [11:59 PM        🕐]                                     │
+│                                                                         │
+│  Description:                                                           │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ Design an ER diagram for a library management system.            │   │
+│  │ Include entities: Book, Member, Loan, Author, Category.          │   │
+│  │ Show all relationships with cardinality.                         │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Attachments:  [📎 Upload Files]  problem_statement.pdf (1.2 MB)        │
+│                                                                         │
+│  Marks Weightage:  [10     ] marks (out of internal)                    │
+│                                                                         │
+│  Applies To:                                                            │
+│  Semester: [5]   Division: [(•) A  ( ) B  ( ) All]                      │
+│                                                                         │
+│  Reminder Settings:                                                     │
+│  [☑] 7 days before  [☑] 3 days before  [☑] 1 day before  [☑] Due day    │
+│                                                                         │
+│  [Cancel]                                          [Create Deadline →]  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3️⃣ Attendance Calculation Logic
+
+### Core Calculation Formula
+
+```javascript
+// AttendanceService.js
+
+class AttendanceService {
+  
+  /**
+   * Calculate attendance for a student in a subject
+   */
+  async calculateAttendance(studentId, subjectId) {
+    // Get subject details
+    const subject = await Subject.findById(subjectId);
+    const minRequired = subject.minAttendancePercent; // e.g., 75
+    
+    // Count attendance records
+    const totalLectures = await Attendance.countDocuments({ 
+      subjectId, 
+      studentId 
+    });
+    
+    const presentCount = await Attendance.countDocuments({ 
+      subjectId, 
+      studentId, 
+      status: 'present' 
+    });
+    
+    // Calculate percentage
+    const percentage = totalLectures > 0 
+      ? Math.round((presentCount / totalLectures) * 100 * 10) / 10  // 1 decimal
+      : 100;
+    
+    // Determine eligibility status
+    const eligibility = this.determineEligibility(percentage, minRequired);
+    
+    // Calculate how many more can be missed / need to attend
+    const projection = this.calculateProjection(presentCount, totalLectures, minRequired);
+    
+    return {
+      studentId,
+      subjectId,
+      totalLectures,
+      presentCount,
+      absentCount: totalLectures - presentCount,
+      percentage,
+      eligibility,
+      projection
+    };
+  }
+  
+  /**
+   * Determine student eligibility for exam
+   */
+  determineEligibility(percentage, minRequired) {
+    if (percentage >= minRequired) {
+      return {
+        status: 'ALLOWED',
+        label: '✅ Eligible for Exam',
+        color: 'green'
+      };
+    } else if (percentage >= minRequired - 10) {  // Within condonation range
+      return {
+        status: 'CONDONATION',
+        label: '⚠️ Condonation Required',
+        color: 'yellow'
+      };
+    } else {
+      return {
+        status: 'DETAINED',
+        label: '❌ Not Allowed for Exam',
+        color: 'red'
+      };
+    }
+  }
+  
+  /**
+   * Project future attendance scenarios
+   */
+  calculateProjection(present, total, minRequired) {
+    // How many lectures can still be missed?
+    // Formula: present - (minRequired% × total) must stay >= 0
+    // Solving: canMiss = present - (minRequired/100 × total)
+    
+    const requiredPresent = Math.ceil((minRequired / 100) * total);
+    const surplus = present - requiredPresent;
+    
+    // If student is short, calculate lectures needed to recover
+    if (surplus < 0) {
+      // Need to attend X more consecutive lectures to reach minRequired
+      // (present + X) / (total + X) >= minRequired/100
+      // Solving for X: X = (minRequired × total - 100 × present) / (100 - minRequired)
+      
+      const lecturesNeeded = Math.ceil(
+        (minRequired * total - 100 * present) / (100 - minRequired)
+      );
+      
+      return {
+        canMiss: 0,
+        needToAttend: lecturesNeeded,
+        message: `Must attend next ${lecturesNeeded} lectures consecutively`
+      };
+    }
+    
+    return {
+      canMiss: surplus,
+      needToAttend: 0,
+      message: surplus > 0 
+        ? `Can safely miss ${surplus} more lecture(s)` 
+        : 'At exact minimum, cannot miss any more'
+    };
+  }
+}
+```
+
+### Calculation Examples
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  EXAMPLE CALCULATIONS                                                  │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  Student A: DBMS                                                       │
+│  ├── Total Lectures: 50                                                │
+│  ├── Present: 40                                                       │
+│  ├── Percentage: (40/50) × 100 = 80%                                   │
+│  ├── Status: ✅ ALLOWED (80% ≥ 75%)                                    │
+│  └── Can Miss: 40 - ceil(0.75 × 50) = 40 - 38 = 2 more lectures        │
+│                                                                        │
+│  Student B: DBMS                                                       │
+│  ├── Total Lectures: 50                                                │
+│  ├── Present: 35                                                       │
+│  ├── Percentage: (35/50) × 100 = 70%                                   │
+│  ├── Status: ⚠️ CONDONATION (70% < 75% but ≥ 65%)                      │
+│  └── Needs: Must attend next 10 consecutive to reach 75%               │
+│            (35+10)/(50+10) = 45/60 = 75% ✓                             │
+│                                                                        │
+│  Student C: DBMS                                                       │
+│  ├── Total Lectures: 50                                                │
+│  ├── Present: 30                                                       │
+│  ├── Percentage: (30/50) × 100 = 60%                                   │
+│  ├── Status: ❌ DETAINED (60% < 65%)                                   │
+│  └── Recovery: Mathematically impossible to reach 75%                  │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Eligibility Status Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     ELIGIBILITY DETERMINATION                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+                    Calculate Attendance %
+                           │
+                           ▼
+              ┌────────────────────────┐
+              │  percentage >= 75%?    │
+              └────────────────────────┘
+                    │           │
+                   YES          NO
+                    │           │
+                    ▼           ▼
+             ┌──────────┐   ┌────────────────────────┐
+             │ ALLOWED  │   │   percentage >= 65%?   │
+             │    ✅    │   └────────────────────────┘
+             └──────────┘         │           │
+                                 YES          NO
+                                  │           │
+                                  ▼           ▼
+                         ┌────────────┐  ┌──────────┐
+                         │ CONDONATION│  │ DETAINED │
+                         │     ⚠️     │  │    ❌    │
+                         └────────────┘  └──────────┘
+```
+
+---
+
+## 4️⃣ Backend APIs Required
+
+### Authentication APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| POST | `/api/auth/register` | Register teacher account | Admin only |
+| POST | `/api/auth/login` | Login, receive JWT | Public |
+| POST | `/api/auth/logout` | Invalidate token | Authenticated |
+| GET | `/api/auth/me` | Get current user | Authenticated |
+| PUT | `/api/auth/password` | Change password | Authenticated |
+
+### Subject APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| POST | `/api/subjects` | Create new subject | Teacher |
+| GET | `/api/subjects` | List all subjects | Authenticated |
+| GET | `/api/subjects/my` | List teacher's subjects | Teacher |
+| GET | `/api/subjects/:id` | Get subject details | Authenticated |
+| PUT | `/api/subjects/:id` | Update subject | Teacher (owner) |
+| DELETE | `/api/subjects/:id` | Soft delete subject | Teacher (owner) |
+| PUT | `/api/subjects/:id/settings` | Update attendance settings | Teacher |
+
+### Student Assignment APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| GET | `/api/subjects/:id/students` | List students in subject | Teacher |
+| POST | `/api/subjects/:id/students` | Assign students to subject | Teacher |
+| DELETE | `/api/subjects/:id/students/:studentId` | Remove student | Teacher |
+| POST | `/api/subjects/:id/students/bulk` | Bulk assign students | Teacher |
+
+### Attendance APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| POST | `/api/attendance/mark` | Mark attendance (batch) | Teacher |
+| GET | `/api/attendance/subject/:subjectId/date/:date` | Get day's attendance | Teacher |
+| GET | `/api/attendance/subject/:subjectId/summary` | Class attendance summary | Teacher |
+| GET | `/api/attendance/student/:studentId` | Student's all attendance | Student (own) / Teacher |
+| GET | `/api/attendance/student/:studentId/subject/:subjectId` | Detailed breakdown | Auth |
+| PUT | `/api/attendance/:id` | Update attendance record | Teacher |
+| GET | `/api/attendance/at-risk/:subjectId` | Students below threshold | Teacher |
+
+### Marks APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| POST | `/api/marks` | Enter marks (batch) | Teacher |
+| GET | `/api/marks/subject/:subjectId/test/:testName` | Get test marks | Teacher |
+| GET | `/api/marks/student/:studentId` | Student's all marks | Student (own) / Teacher |
+| GET | `/api/marks/student/:studentId/subject/:subjectId` | Subject-wise marks | Auth |
+| PUT | `/api/marks/:id` | Update marks entry | Teacher |
+| DELETE | `/api/marks/:id` | Delete marks entry | Teacher |
+| GET | `/api/marks/summary/:studentId` | Internal marks summary | Auth |
+
+### Deadline APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| POST | `/api/deadlines` | Create deadline | Teacher |
+| GET | `/api/deadlines` | List deadlines (with filters) | Authenticated |
+| GET | `/api/deadlines/my` | Teacher's created deadlines | Teacher |
+| GET | `/api/deadlines/:id` | Get deadline details | Authenticated |
+| PUT | `/api/deadlines/:id` | Update deadline | Teacher (owner) |
+| DELETE | `/api/deadlines/:id` | Delete deadline | Teacher (owner) |
+
+### Analytics APIs
+
+| Method | Route | Description | Auth |
+|--------|-------|-------------|------|
+| GET | `/api/analytics/class/:subjectId` | Class-wide statistics | Teacher |
+| GET | `/api/analytics/student/:studentId` | Student dashboard data | Student (own) / Teacher |
+| GET | `/api/analytics/at-risk` | All at-risk students | Teacher |
+| GET | `/api/analytics/eligibility/:subjectId` | Eligibility report | Teacher |
+
+---
+
+## 5️⃣ MongoDB Schema Design
+
+### Teacher Schema (embedded in User)
+
+```javascript
+// models/User.js
+const userSchema = new mongoose.Schema({
+  userId: { 
+    type: String, 
+    required: true, 
+    unique: true 
+  },  // TCH_001, STU_001
+  
+  name: { 
+    type: String, 
+    required: true 
+  },
+  
+  email: { 
+    type: String, 
+    required: true, 
+    unique: true,
+    lowercase: true,
+    match: [/^\S+@\S+\.\S+$/, 'Invalid email']
+  },
+  
+  passwordHash: { 
+    type: String, 
+    required: true 
+  },
+  
+  role: { 
+    type: String, 
+    enum: ['student', 'teacher', 'admin'],
+    required: true 
+  },
+  
+  department: { 
+    type: String, 
+    required: true 
+  },
+  
+  // Teacher-specific fields
+  designation: { 
+    type: String,
+    enum: ['Assistant Professor', 'Associate Professor', 'Professor', 'HOD']
+  },
+  
+  subjectsTeaching: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subject'
+  }],
+  
+  // Student-specific fields
+  semester: { type: Number, min: 1, max: 8 },
+  division: String,
+  rollNumber: String,
+  enrolledSubjects: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subject'
+  }],
+  
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+// Compound indexes
+userSchema.index({ role: 1, department: 1 });
+userSchema.index({ role: 1, semester: 1, division: 1 });
+```
+
+### Subject Schema
+
+```javascript
+// models/Subject.js
+const subjectSchema = new mongoose.Schema({
+  subjectCode: { 
+    type: String, 
+    required: true, 
+    unique: true,
+    uppercase: true
+  },  // CS301
+  
+  subjectName: { 
+    type: String, 
+    required: true 
+  },
+  
+  department: { 
+    type: String, 
+    required: true 
+  },
+  
+  semester: { 
+    type: Number, 
+    required: true,
+    min: 1,
+    max: 8
+  },
+  
+  divisions: [{
+    type: String,
+    enum: ['A', 'B', 'C', 'D']
+  }],
+  
+  credits: { 
+    type: Number, 
+    default: 4 
+  },
+  
+  // Attendance configuration
+  totalPlannedLectures: { 
+    type: Number, 
+    default: 60 
+  },
+  
+  lecturesConducted: { 
+    type: Number, 
+    default: 0 
+  },
+  
+  minAttendancePercent: { 
+    type: Number, 
+    default: 75,
+    min: 0,
+    max: 100
+  },
+  
+  // Marks configuration
+  marksDistribution: {
+    internal: { type: Number, default: 30 },
+    practical: { type: Number, default: 20 },
+    external: { type: Number, default: 50 }
+  },
+  
+  // Ownership
+  createdBy: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  
+  teachers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  
+  enrolledStudents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+// Indexes
+subjectSchema.index({ department: 1, semester: 1 });
+subjectSchema.index({ createdBy: 1 });
+```
+
+### Attendance Schema
+
+```javascript
+// models/Attendance.js
+const attendanceSchema = new mongoose.Schema({
+  studentId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  
+  subjectId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Subject',
+    required: true
+  },
+  
+  date: { 
+    type: Date, 
+    required: true 
+  },
+  
+  lectureNumber: { 
+    type: Number, 
+    required: true,
+    min: 1
+  },
+  
+  status: { 
+    type: String, 
+    enum: ['present', 'absent', 'late', 'excused'],
+    required: true
+  },
+  
+  topic: String,  // Optional: Topic covered in this lecture
+  
+  markedBy: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  
+  markedAt: { 
+    type: Date, 
+    default: Date.now 
+  },
+  
+  // For audit trail on edits
+  lastEditedBy: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User'
+  },
+  lastEditedAt: Date,
+  editReason: String
+});
+
+// CRITICAL: Prevent duplicate attendance entries
+attendanceSchema.index(
+  { studentId: 1, subjectId: 1, date: 1, lectureNumber: 1 }, 
+  { unique: true }
+);
+
+// Query optimization indexes
+attendanceSchema.index({ subjectId: 1, date: 1 });
+attendanceSchema.index({ studentId: 1, subjectId: 1 });
+```
+
+### Marks Schema
+
+```javascript
+// models/Marks.js
+const marksSchema = new mongoose.Schema({
+  studentId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  
+  subjectId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Subject',
+    required: true
+  },
+  
+  category: { 
+    type: String, 
+    enum: ['internal', 'practical', 'external'],
+    required: true
+  },
+  
+  testType: { 
+    type: String, 
+    enum: ['assignment', 'quiz', 'unit-test', 'mid-term', 'lab', 'viva', 'project', 'final'],
+    required: true
+  },
+  
+  testName: { 
+    type: String, 
+    required: true 
+  },  // "Unit Test 1", "Assignment 3"
+  
+  marksObtained: { 
+    type: Number, 
+    required: true,
+    min: 0
+  },
+  
+  maxMarks: { 
+    type: Number, 
+    required: true,
+    min: 1
+  },
+  
+  date: { 
+    type: Date, 
+    required: true 
+  },
+  
+  remarks: String,
+  
+  enteredBy: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+// Prevent duplicate marks entries
+marksSchema.index(
+  { studentId: 1, subjectId: 1, testType: 1, testName: 1 }, 
+  { unique: true }
+);
+
+// Validation: marks cannot exceed max
+marksSchema.pre('save', function(next) {
+  if (this.marksObtained > this.maxMarks) {
+    return next(new Error('Marks obtained cannot exceed maximum marks'));
+  }
+  next();
+});
+```
+
+---
+
+## 6️⃣ Angular Teacher Dashboard Structure
+
+### Component Hierarchy
+
+```
+src/app/
+├── core/
+│   ├── guards/
+│   │   ├── auth.guard.ts
+│   │   └── teacher.guard.ts
+│   ├── interceptors/
+│   │   └── auth.interceptor.ts
+│   ├── services/
+│   │   ├── auth.service.ts
+│   │   ├── subject.service.ts
+│   │   ├── attendance.service.ts
+│   │   ├── marks.service.ts
+│   │   ├── deadline.service.ts
+│   │   └── analytics.service.ts
+│   └── models/
+│       ├── user.model.ts
+│       ├── subject.model.ts
+│       ├── attendance.model.ts
+│       └── marks.model.ts
+│
+├── features/
+│   ├── auth/
+│   │   ├── login/
+│   │   │   └── login.component.ts
+│   │   └── auth.module.ts
+│   │
+│   ├── teacher/
+│   │   ├── teacher-routing.module.ts
+│   │   ├── teacher.module.ts
+│   │   │
+│   │   ├── dashboard/
+│   │   │   └── teacher-dashboard.component.ts      # Main dashboard
+│   │   │
+│   │   ├── subjects/
+│   │   │   ├── subject-list/
+│   │   │   │   └── subject-list.component.ts       # View all subjects
+│   │   │   ├── subject-form/
+│   │   │   │   └── subject-form.component.ts       # Create/Edit subject
+│   │   │   └── subject-detail/
+│   │   │       └── subject-detail.component.ts     # Subject details
+│   │   │
+│   │   ├── attendance/
+│   │   │   ├── mark-attendance/
+│   │   │   │   └── mark-attendance.component.ts    # Mark attendance form
+│   │   │   ├── attendance-history/
+│   │   │   │   └── attendance-history.component.ts # View past attendance
+│   │   │   └── attendance-report/
+│   │   │       └── attendance-report.component.ts  # Class attendance report
+│   │   │
+│   │   ├── marks/
+│   │   │   ├── enter-marks/
+│   │   │   │   └── enter-marks.component.ts        # Marks entry form
+│   │   │   ├── marks-list/
+│   │   │   │   └── marks-list.component.ts         # View marks
+│   │   │   └── marks-summary/
+│   │   │       └── marks-summary.component.ts      # Class marks summary
+│   │   │
+│   │   ├── deadlines/
+│   │   │   ├── deadline-form/
+│   │   │   │   └── deadline-form.component.ts      # Create/Edit deadline
+│   │   │   └── deadline-list/
+│   │   │       └── deadline-list.component.ts      # View deadlines
+│   │   │
+│   │   ├── students/
+│   │   │   ├── student-list/
+│   │   │   │   └── student-list.component.ts       # View students in subject
+│   │   │   ├── student-detail/
+│   │   │   │   └── student-detail.component.ts     # Individual student view
+│   │   │   └── at-risk/
+│   │   │       └── at-risk.component.ts            # At-risk students
+│   │   │
+│   │   └── analytics/
+│   │       └── class-analytics/
+│   │           └── class-analytics.component.ts    # Class-wide analytics
+│   │
+│   └── student/
+│       └── ...  # Student module (separate)
+│
+└── shared/
+    ├── components/
+    │   ├── navbar/
+    │   ├── sidebar/
+    │   ├── data-table/
+    │   ├── status-badge/
+    │   └── loading-spinner/
+    └── shared.module.ts
+```
+
+### Teacher Routing
+
+```typescript
+// teacher-routing.module.ts
+const routes: Routes = [
+  {
+    path: 'teacher',
+    canActivate: [TeacherGuard],
+    children: [
+      { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
+      { path: 'dashboard', component: TeacherDashboardComponent },
+      
+      // Subjects
+      { path: 'subjects', component: SubjectListComponent },
+      { path: 'subjects/new', component: SubjectFormComponent },
+      { path: 'subjects/:id', component: SubjectDetailComponent },
+      { path: 'subjects/:id/edit', component: SubjectFormComponent },
+      
+      // Attendance
+      { path: 'attendance/mark', component: MarkAttendanceComponent },
+      { path: 'attendance/history/:subjectId', component: AttendanceHistoryComponent },
+      { path: 'attendance/report/:subjectId', component: AttendanceReportComponent },
+      
+      // Marks
+      { path: 'marks/enter', component: EnterMarksComponent },
+      { path: 'marks/subject/:subjectId', component: MarksListComponent },
+      { path: 'marks/summary/:subjectId', component: MarksSummaryComponent },
+      
+      // Deadlines
+      { path: 'deadlines', component: DeadlineListComponent },
+      { path: 'deadlines/new', component: DeadlineFormComponent },
+      { path: 'deadlines/:id/edit', component: DeadlineFormComponent },
+      
+      // Students
+      { path: 'students/:subjectId', component: StudentListComponent },
+      { path: 'students/detail/:studentId', component: StudentDetailComponent },
+      { path: 'at-risk', component: AtRiskComponent },
+      
+      // Analytics
+      { path: 'analytics/:subjectId', component: ClassAnalyticsComponent }
+    ]
+  }
+];
+```
+
+---
+
+## 7️⃣ Security: Student vs Teacher Dashboard Isolation
+
+### Access Control Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      SECURITY LAYERS                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+                         ┌─────────────────┐
+                         │  User Request   │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 1: Angular Route Guards                                          │
+│  ───────────────────────────────────────────────────────────────────────│
+│  • TeacherGuard: Blocks students from /teacher/* routes                 │
+│  • StudentGuard: Blocks teachers from /student/* routes                 │
+│  • Redirects unauthorized users to appropriate dashboard                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 2: Angular HTTP Interceptor                                      │
+│  ───────────────────────────────────────────────────────────────────────│
+│  • Attaches JWT token to all API requests                               │
+│  • Redirects to login on 401 errors                                     │
+│  • Handles token refresh (if implemented)                               │
+└─────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 3: Express Auth Middleware                                       │
+│  ───────────────────────────────────────────────────────────────────────│
+│  • Validates JWT token                                                  │
+│  • Extracts user from token payload                                     │
+│  • Rejects invalid/expired tokens with 401                              │
+└─────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 4: Role Middleware                                               │
+│  ───────────────────────────────────────────────────────────────────────│
+│  • Checks user.role against required role for route                     │
+│  • Teacher routes require role === 'teacher'                            │
+│  • Returns 403 Forbidden if role mismatch                               │
+└─────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 5: Resource Ownership Check                                      │
+│  ───────────────────────────────────────────────────────────────────────│
+│  • Students can only access their OWN data                              │
+│  • Teachers can only access subjects THEY created                       │
+│  • Example: GET /attendance/student/:id checks if id === req.user.id    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Examples
+
+#### Backend: Protected Routes
+
+```javascript
+// routes/teacher.routes.js
+
+const router = express.Router();
+
+// Apply auth + role middleware to ALL teacher routes
+router.use(authMiddleware);
+router.use(roleMiddleware('teacher'));
+
+// These routes are now protected
+router.post('/subjects', subjectController.create);
+router.post('/attendance/mark', attendanceController.mark);
+router.post('/marks', marksController.enter);
+router.post('/deadlines', deadlineController.create);
+
+module.exports = router;
+```
+
+#### Backend: Student Data Access Control
+
+```javascript
+// controllers/attendance.controller.js
+
+async getStudentAttendance(req, res) {
+  const { studentId } = req.params;
+  
+  // SECURITY CHECK: Students can only view their own data
+  if (req.user.role === 'student' && req.user.userId !== studentId) {
+    return res.status(403).json({ 
+      error: 'Access denied: Cannot view other student data' 
+    });
+  }
+  
+  // Teachers can view any student in their subjects
+  if (req.user.role === 'teacher') {
+    const isEnrolled = await this.checkStudentInTeacherSubjects(
+      studentId, 
+      req.user.userId
+    );
+    if (!isEnrolled) {
+      return res.status(403).json({ 
+        error: 'Access denied: Student not in your subjects' 
+      });
+    }
+  }
+  
+  // Proceed with data fetch
+  const attendance = await AttendanceService.getStudentAttendance(studentId);
+  res.json(attendance);
+}
+```
+
+#### Angular: Hidden UI Elements
+
+```typescript
+// teacher-only buttons hidden from student view
+@Component({
+  template: `
+    <!-- Visible to everyone -->
+    <div class="attendance-display">
+      <span>Attendance: {{ percentage }}%</span>
+    </div>
+    
+    <!-- Only visible to teachers -->
+    <div *ngIf="authService.isTeacher()" class="teacher-actions">
+      <button (click)="editAttendance()">Edit Attendance</button>
+      <button (click)="deleteRecord()">Delete Record</button>
+    </div>
+  `
+})
+export class AttendanceCardComponent {
+  constructor(public authService: AuthService) {}
+}
+```
+
+### API Segregation Summary
+
+| Endpoint Pattern | Accessible By | Why |
+|-----------------|---------------|-----|
+| `POST /attendance/mark` | Teacher only | Only teachers mark attendance |
+| `GET /attendance/student/:id` | Student (own) + Teacher | Students see own, teachers see enrolled students |
+| `POST /marks` | Teacher only | Only teachers enter marks |
+| `GET /marks/student/:id` | Student (own) + Teacher | Same as attendance |
+| `POST /subjects` | Teacher only | Only teachers create subjects |
+| `GET /subjects` | All authenticated | Everyone can see subjects list |
+| `POST /deadlines` | Teacher only | Only teachers create deadlines |
+| `GET /deadlines` | All authenticated | Everyone can see deadlines |
+
+---
+
+## Summary
+
+| Aspect | Implementation |
+|--------|---------------|
+| **Auth** | JWT tokens with role in payload |
+| **Authorization** | 4-layer security (Guards → Interceptor → Auth MW → Role MW) |
+| **Attendance Logic** | Real-time % calculation, eligibility determination |
+| **Data Isolation** | Students see own data only, teachers see enrolled students |
+| **API Design** | RESTful, role-protected, resource-scoped |
+| **Angular Structure** | Feature modules with lazy loading |
+
+> **Next Step**: Implement the actual code for backend routes, MongoDB models, and Angular components.
