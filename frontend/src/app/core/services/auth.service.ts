@@ -10,9 +10,13 @@ export interface User {
     email: string;
     role: 'student' | 'teacher' | 'admin';
     department: string;
+    stream?: 'BCA' | 'BBA' | 'Both';
     semester?: number;
     division?: string;
     rollNumber?: string;
+    isHOD?: boolean;
+    phone?: string;
+    isActive?: boolean;
 }
 
 export interface AuthResponse {
@@ -87,5 +91,9 @@ export class AuthService {
 
     isStudent(): boolean {
         return this.getCurrentUser()?.role === 'student';
+    }
+
+    isAdmin(): boolean {
+        return this.getCurrentUser()?.role === 'admin';
     }
 }

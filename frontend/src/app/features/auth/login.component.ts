@@ -5,10 +5,10 @@ import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
-    selector: 'app-login',
-    standalone: true,
-    imports: [CommonModule, FormsModule, RouterLink],
-    template: `
+  selector: 'app-login',
+  standalone: true,
+  imports: [CommonModule, FormsModule, RouterLink],
+  template: `
     <div class="auth-container">
       <div class="auth-card">
         <div class="auth-header">
@@ -42,13 +42,14 @@ import { AuthService } from '../../core/services/auth.service';
         
         <div class="demo-credentials">
           <p><strong>Demo Credentials:</strong></p>
-          <p>Teacher: sharma&#64;college.edu / password123</p>
-          <p>Student: student1&#64;college.edu / password123</p>
+          <p>👑 HOD: admin&#64;college.edu / admin123</p>
+          <p>👨‍🏫 Teacher: sharma&#64;college.edu / password123</p>
+          <p>👨‍🎓 Student: rahul&#64;college.edu / password123</p>
         </div>
       </div>
     </div>
   `,
-    styles: [`
+  styles: [`
     .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
     .auth-card { background: white; border-radius: 20px; padding: 2.5rem; width: 100%; max-width: 420px; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); }
     .auth-header { text-align: center; margin-bottom: 2rem; }
@@ -70,28 +71,36 @@ import { AuthService } from '../../core/services/auth.service';
   `]
 })
 export class LoginComponent {
-    email = '';
-    password = '';
-    error = '';
-    loading = false;
+  email = '';
+  password = '';
+  error = '';
+  loading = false;
 
-    constructor(private authService: AuthService, private router: Router) { }
+  constructor(private authService: AuthService, private router: Router) { }
 
-    login(): void {
-        this.loading = true;
-        this.error = '';
+  login(): void {
+    this.loading = true;
+    this.error = '';
 
-        this.authService.login(this.email, this.password).subscribe({
-            next: (res) => {
-                this.loading = false;
-                if (res.success) {
-                    this.router.navigate([res.user.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard']);
-                }
-            },
-            error: (err) => {
-                this.loading = false;
-                this.error = err.error?.message || 'Login failed. Please try again.';
-            }
-        });
-    }
+    this.authService.login(this.email, this.password).subscribe({
+      next: (res) => {
+        this.loading = false;
+        if (res.success) {
+          // Redirect based on user role
+          const role = res.user.role;
+          if (role === 'admin') {
+            this.router.navigate(['/admin/dashboard']);
+          } else if (role === 'teacher') {
+            this.router.navigate(['/teacher/dashboard']);
+          } else {
+            this.router.navigate(['/student/dashboard']);
+          }
+        }
+      },
+      error: (err) => {
+        this.loading = false;
+        this.error = err.error?.message || 'Login failed. Please try again.';
+      }
+    });
+  }
 }

@@ -39,7 +39,7 @@ router.post('/register', [
             });
         }
 
-        const { name, email, password, role, department, semester, division, rollNumber, designation } = req.body;
+        const { name, email, password, role, department, semester, division, rollNumber, designation, stream } = req.body;
 
         // Check if user already exists
         const existingUser = await User.findOne({ email });
@@ -74,11 +74,19 @@ router.post('/register', [
                     message: 'Semester and division are required for students'
                 });
             }
+            if (!stream) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Stream (BCA/BBA) is required for students'
+                });
+            }
             userData.semester = semester;
             userData.division = division;
             userData.rollNumber = rollNumber || userId;
+            userData.stream = stream;
         } else if (role === 'teacher') {
             userData.designation = designation || 'Assistant Professor';
+            if (stream) userData.stream = stream; // Optional for teachers
         }
 
         // Create user
@@ -242,4 +250,87 @@ router.put('/password', [
     }
 });
 
+/**
+ * @route   GET /api/auth/users
+ * @desc    Get all users (admin only)
+ * @access  Private (Admin)
+ */
+router.get('/users', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const { role, stream, semester, isActive } = req.query;
+
+        const filter = {};
+        if (role) filter.role = role;
+        if (stream) filter.stream = stream;
+        if (semester) filter.semester = parseInt(semester);
+        if (isActive !== undefined) filter.isActive = isActive === 'true';
+
+        const users = await User.find(filter).sort({ createdAt: -1 });
+
+        res.json({ success: true, users, count: users.length });
+    } catch (error) {
+        console.error('Get users error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   PUT /api/auth/users/:id
+ * @desc    Update user (admin only)
+ * @access  Private (Admin)
+ */
+router.put('/users/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const { password, ...updateData } = req.body;
+
+        const user = await User.findByIdAndUpdate(
+            req.params.id,
+            updateData,
+            { new: true, runValidators: true }
+        );
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        res.json({ success: true, user, message: 'User updated successfully' });
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/auth/users/:id
+ * @desc    Delete user (admin only)
+ * @access  Private (Admin)
+ */
+router.delete('/users/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const user = await User.findByIdAndDelete(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        res.json({ success: true, message: 'User deleted successfully' });
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;
+

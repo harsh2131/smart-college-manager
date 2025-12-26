@@ -1,165 +1,193 @@
 const express = require('express');
 const Attendance = require('../models/Attendance');
-const Marks = require('../models/Marks');
+const Assignment = require('../models/Assignment');
+const Submission = require('../models/Submission');
 const Subject = require('../models/Subject');
 const User = require('../models/User');
-const Deadline = require('../models/Deadline');
 const authMiddleware = require('../middleware/auth.middleware');
 const { isTeacher, isTeacherOrStudent } = require('../middleware/role.middleware');
 const mongoose = require('mongoose');
 
 const router = express.Router();
 
-// GET /api/analytics/student/:studentId - Complete student dashboard
-router.get('/student/:studentId', [authMiddleware, isTeacherOrStudent], async (req, res) => {
+/**
+ * @route   GET /api/analytics/teacher-dashboard
+ * @desc    Get teacher dashboard summary
+ * @access  Teacher
+ */
+router.get('/teacher-dashboard', [authMiddleware, isTeacher], async (req, res) => {
     try {
-        const { studentId } = req.params;
+        // Get teacher's subjects
+        const subjects = await Subject.find({ teacherId: req.user._id });
+        const subjectIds = subjects.map(s => s._id);
 
-        if (req.user.role === 'student' && req.user._id.toString() !== studentId) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
-        }
+        // Get semesters taught
+        const semesters = [...new Set(subjects.map(s => s.semester))];
 
-        const student = await User.findById(studentId).populate('enrolledSubjects');
-        if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+        // Total students (by semester)
+        const totalStudents = await User.countDocuments({
+            role: 'student',
+            semester: { $in: semesters }
+        });
 
-        // Attendance summary
-        const attendanceSummary = await Attendance.aggregate([
-            { $match: { studentId: new mongoose.Types.ObjectId(studentId) } },
-            {
-                $group: {
-                    _id: '$subjectId',
-                    total: { $sum: 1 },
-                    present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } }
-                }
-            },
-            { $lookup: { from: 'subjects', localField: '_id', foreignField: '_id', as: 'subject' } },
-            { $unwind: '$subject' },
-            {
-                $project: {
-                    subjectCode: '$subject.subjectCode',
-                    subjectName: '$subject.subjectName',
-                    minRequired: '$subject.minAttendancePercent',
-                    total: 1, present: 1,
-                    percentage: { $round: [{ $multiply: [{ $divide: ['$present', '$total'] }, 100] }, 1] }
-                }
-            }
+        // Today's attendance
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const todayAttendance = await Attendance.aggregate([
+            { $match: { subjectId: { $in: subjectIds }, date: { $gte: today, $lt: tomorrow } } },
+            { $group: { _id: null, total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } } } }
         ]);
 
-        // Marks summary
-        const marksSummary = await Marks.aggregate([
-            { $match: { studentId: new mongoose.Types.ObjectId(studentId) } },
-            {
-                $group: {
-                    _id: '$subjectId',
-                    obtained: { $sum: '$marksObtained' },
-                    max: { $sum: '$maxMarks' }
-                }
-            },
-            { $lookup: { from: 'subjects', localField: '_id', foreignField: '_id', as: 'subject' } },
-            { $unwind: '$subject' },
-            {
-                $project: {
-                    subjectCode: '$subject.subjectCode',
-                    subjectName: '$subject.subjectName',
-                    obtained: 1, max: 1,
-                    percentage: { $round: [{ $multiply: [{ $divide: ['$obtained', '$max'] }, 100] }, 1] }
-                }
-            }
+        const attendanceToday = todayAttendance.length > 0
+            ? Math.round((todayAttendance[0].present / todayAttendance[0].total) * 100)
+            : null;
+
+        // Pending assignments to review
+        const pendingSubmissions = await Submission.countDocuments({
+            assignmentId: { $in: await Assignment.find({ createdBy: req.user._id }).distinct('_id') },
+            marks: null
+        });
+
+        // Low attendance students (<75%)
+        const lowAttendance = await Attendance.aggregate([
+            { $match: { subjectId: { $in: subjectIds } } },
+            { $group: { _id: '$studentId', total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } } } },
+            { $addFields: { percentage: { $multiply: [{ $divide: ['$present', '$total'] }, 100] } } },
+            { $match: { percentage: { $lt: 75 } } },
+            { $count: 'count' }
         ]);
+        const lowAttendanceCount = lowAttendance.length > 0 ? lowAttendance[0].count : 0;
 
         // Upcoming deadlines
-        const now = new Date();
-        const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const upcomingDeadlines = await Deadline.find({
-            isActive: true,
-            dueDate: { $gte: now, $lte: weekLater }
-        }).populate('subjectId', 'subjectCode subjectName').limit(5);
+        const upcomingDeadlines = await Assignment.find({
+            createdBy: req.user._id,
+            dueDate: { $gte: new Date() }
+        }).populate('subjectId', 'subjectCode').sort({ dueDate: 1 }).limit(5);
 
-        // Warnings
-        const warnings = [];
-        attendanceSummary.forEach(s => {
-            if (s.percentage < s.minRequired) {
-                warnings.push({ type: 'attendance', subjectCode: s.subjectCode, message: `Low attendance: ${s.percentage}%` });
-            }
-        });
+        // Get student count and lecture count per subject
+        const subjectsWithStats = await Promise.all(subjects.map(async (s) => {
+            const studentsCount = await User.countDocuments({
+                role: 'student',
+                semester: s.semester
+            });
+            const lecturesConducted = await Attendance.distinct('date', { subjectId: s._id }).then(dates => dates.length);
+            return {
+                _id: s._id,
+                subjectCode: s.subjectCode,
+                subjectName: s.subjectName,
+                semester: s.semester,
+                studentsCount,
+                lecturesConducted
+            };
+        }));
 
         res.json({
             success: true,
-            student: { name: student.name, rollNumber: student.rollNumber, semester: student.semester, division: student.division },
-            attendanceSummary,
-            marksSummary,
-            upcomingDeadlines,
-            warnings
+            stats: {
+                totalStudents,
+                totalSubjects: subjects.length,
+                attendanceToday,
+                pendingReviews: pendingSubmissions,
+                atRiskStudents: lowAttendanceCount,
+                lowAttendanceStudents: lowAttendanceCount
+            },
+            subjects: subjectsWithStats,
+            upcomingDeadlines
         });
     } catch (error) {
-        console.error('Analytics error:', error);
+        console.error('Teacher dashboard error:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
-// GET /api/analytics/class/:subjectId - Class analytics
+/**
+ * @route   GET /api/analytics/student-dashboard
+ * @desc    Get student dashboard summary
+ * @access  Student
+ */
+router.get('/student-dashboard', authMiddleware, async (req, res) => {
+    try {
+        const studentId = req.user._id;
+        const semester = req.user.semester;
+
+        // Get subjects for student's semester
+        const subjects = await Subject.find({ semester }).populate('teacherId', 'name');
+
+        // Attendance summary (calculated dynamically)
+        const attendanceSummary = await Attendance.aggregate([
+            { $match: { studentId: new mongoose.Types.ObjectId(studentId) } },
+            { $group: { _id: '$subjectId', total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } } } },
+            { $lookup: { from: 'subjects', localField: '_id', foreignField: '_id', as: 'subject' } },
+            { $unwind: '$subject' },
+            { $project: { subjectCode: '$subject.subjectCode', subjectName: '$subject.subjectName', totalClasses: '$total', presentDays: '$present', percentage: { $round: [{ $multiply: [{ $divide: ['$present', '$total'] }, 100] }, 1] } } }
+        ]);
+
+        // Upcoming deadlines
+        const upcomingDeadlines = await Assignment.find({
+            subjectId: { $in: subjects.map(s => s._id) },
+            dueDate: { $gte: new Date() }
+        }).populate('subjectId', 'subjectCode').sort({ dueDate: 1 }).limit(5);
+
+        // Recent submissions with marks
+        const submissions = await Submission.find({ studentId })
+            .populate({
+                path: 'assignmentId',
+                select: 'title dueDate',
+                populate: { path: 'subjectId', select: 'subjectCode' }
+            })
+            .sort({ submittedAt: -1 }).limit(5);
+
+        res.json({
+            success: true,
+            subjects,
+            attendanceSummary,
+            upcomingDeadlines,
+            recentSubmissions: submissions
+        });
+    } catch (error) {
+        console.error('Student dashboard error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   GET /api/analytics/class/:subjectId
+ * @desc    Get class analytics
+ * @access  Teacher
+ */
 router.get('/class/:subjectId', [authMiddleware, isTeacher], async (req, res) => {
     try {
-        const { subjectId } = req.params;
-        const subject = await Subject.findById(subjectId);
-        if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+        const subject = await Subject.findById(req.params.subjectId);
+        if (!subject) {
+            return res.status(404).json({ success: false, message: 'Subject not found' });
+        }
 
-        const stats = await Attendance.aggregate([
-            { $match: { subjectId: new mongoose.Types.ObjectId(subjectId) } },
-            {
-                $group: {
-                    _id: '$studentId',
-                    total: { $sum: 1 },
-                    present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } }
-                }
-            },
+        const students = await Attendance.aggregate([
+            { $match: { subjectId: new mongoose.Types.ObjectId(req.params.subjectId) } },
+            { $group: { _id: '$studentId', total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } } } },
             { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ['$present', '$total'] }, 100] }, 1] } } },
             { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'student' } },
             { $unwind: '$student' },
-            { $project: { name: '$student.name', rollNumber: '$student.rollNumber', total: 1, present: 1, percentage: 1 } }
+            { $project: { name: '$student.name', email: '$student.email', total: 1, present: 1, percentage: 1 } },
+            { $sort: { percentage: 1 } }
         ]);
 
-        const totalStudents = stats.length;
-        const avgAttendance = totalStudents > 0 ? (stats.reduce((s, x) => s + x.percentage, 0) / totalStudents).toFixed(1) : 0;
-        const atRisk = stats.filter(s => s.percentage < subject.minAttendancePercent);
+        const totalStudents = students.length;
+        const avgAttendance = totalStudents > 0
+            ? (students.reduce((sum, s) => sum + s.percentage, 0) / totalStudents).toFixed(1)
+            : 0;
+        const lowAttendance = students.filter(s => s.percentage < 75);
 
         res.json({
             success: true,
             subject: { subjectCode: subject.subjectCode, subjectName: subject.subjectName },
-            statistics: { totalStudents, avgAttendance, atRiskCount: atRisk.length },
-            students: stats,
-            atRiskStudents: atRisk
+            stats: { totalStudents, avgAttendance: parseFloat(avgAttendance), lowAttendanceCount: lowAttendance.length },
+            students,
+            lowAttendanceStudents: lowAttendance
         });
-    } catch (error) {
-        res.status(500).json({ success: false, message: 'Server error' });
-    }
-});
-
-// GET /api/analytics/at-risk - All at-risk students
-router.get('/at-risk', [authMiddleware, isTeacher], async (req, res) => {
-    try {
-        const subjects = await Subject.find({ teachers: req.user._id });
-        const subjectIds = subjects.map(s => s._id);
-
-        const atRisk = await Attendance.aggregate([
-            { $match: { subjectId: { $in: subjectIds } } },
-            {
-                $group: {
-                    _id: { student: '$studentId', subject: '$subjectId' },
-                    total: { $sum: 1 },
-                    present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } }
-                }
-            },
-            { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ['$present', '$total'] }, 100] }, 1] } } },
-            { $match: { percentage: { $lt: 75 } } },
-            { $lookup: { from: 'users', localField: '_id.student', foreignField: '_id', as: 'student' } },
-            { $lookup: { from: 'subjects', localField: '_id.subject', foreignField: '_id', as: 'subject' } },
-            { $unwind: '$student' }, { $unwind: '$subject' },
-            { $project: { name: '$student.name', rollNumber: '$student.rollNumber', subjectCode: '$subject.subjectCode', percentage: 1 } },
-            { $sort: { percentage: 1 } }
-        ]);
-
-        res.json({ success: true, count: atRisk.length, atRiskStudents: atRisk });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server error' });
     }

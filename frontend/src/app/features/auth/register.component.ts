@@ -5,10 +5,10 @@ import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
-    selector: 'app-register',
-    standalone: true,
-    imports: [CommonModule, FormsModule, RouterLink],
-    template: `
+  selector: 'app-register',
+  standalone: true,
+  imports: [CommonModule, FormsModule, RouterLink],
+  template: `
     <div class="auth-container">
       <div class="auth-card">
         <div class="auth-header">
@@ -29,9 +29,19 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
           <div class="form-group"><label>Department</label><input type="text" class="input" [(ngModel)]="formData.department" name="department" placeholder="e.g., CSE" required></div>
           
-          <div *ngIf="formData.role === 'student'" class="grid-2">
-            <div class="form-group"><label>Semester</label><input type="number" class="input" [(ngModel)]="formData.semester" name="semester" min="1" max="8"></div>
-            <div class="form-group"><label>Division</label><input type="text" class="input" [(ngModel)]="formData.division" name="division" placeholder="e.g., A"></div>
+          <div *ngIf="formData.role === 'student'" class="student-fields">
+            <div class="form-group">
+              <label>Stream</label>
+              <select class="input" [(ngModel)]="formData.stream" name="stream" required>
+                <option value="">Select Stream</option>
+                <option value="BCA">BCA</option>
+                <option value="BBA">BBA</option>
+              </select>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label>Semester</label><input type="number" class="input" [(ngModel)]="formData.semester" name="semester" min="1" max="6"></div>
+              <div class="form-group"><label>Division</label><input type="text" class="input" [(ngModel)]="formData.division" name="division" placeholder="e.g., A"></div>
+            </div>
           </div>
           
           <div *ngIf="error" class="error-message">{{ error }}</div>
@@ -42,7 +52,7 @@ import { AuthService } from '../../core/services/auth.service';
       </div>
     </div>
   `,
-    styles: [`
+  styles: [`
     .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
     .auth-card { background: white; border-radius: 20px; padding: 2.5rem; width: 100%; max-width: 480px; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); }
     .auth-header { text-align: center; margin-bottom: 2rem; }
@@ -62,23 +72,23 @@ import { AuthService } from '../../core/services/auth.service';
   `]
 })
 export class RegisterComponent {
-    formData = { name: '', email: '', password: '', role: 'student', department: '', semester: 5, division: 'A' };
-    error = '';
-    loading = false;
+  formData = { name: '', email: '', password: '', role: 'student', department: '', semester: 1, division: 'A', stream: '' };
+  error = '';
+  loading = false;
 
-    constructor(private authService: AuthService, private router: Router) { }
+  constructor(private authService: AuthService, private router: Router) { }
 
-    register(): void {
-        this.loading = true;
-        this.error = '';
-        this.authService.register(this.formData).subscribe({
-            next: (res) => {
-                this.loading = false;
-                if (res.success) {
-                    this.router.navigate([res.user.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard']);
-                }
-            },
-            error: (err) => { this.loading = false; this.error = err.error?.message || 'Registration failed.'; }
-        });
-    }
+  register(): void {
+    this.loading = true;
+    this.error = '';
+    this.authService.register(this.formData).subscribe({
+      next: (res) => {
+        this.loading = false;
+        if (res.success) {
+          this.router.navigate([res.user.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard']);
+        }
+      },
+      error: (err) => { this.loading = false; this.error = err.error?.message || 'Registration failed.'; }
+    });
+  }
 }
