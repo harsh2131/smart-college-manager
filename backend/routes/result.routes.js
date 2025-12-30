@@ -319,4 +319,99 @@ router.get('/admin/summary', [authMiddleware, isAdmin], async (req, res) => {
     }
 });
 
+/**
+ * @route   PUT /api/results/:id
+ * @desc    Update result
+ * @access  Admin/Teacher
+ */
+router.put('/:id', [authMiddleware, isTeacher], async (req, res) => {
+    try {
+        const { subjects, isPublished } = req.body;
+
+        const result = await Result.findById(req.params.id);
+        if (!result) {
+            return res.status(404).json({ success: false, message: 'Result not found' });
+        }
+
+        // Only admin can change publish status
+        if (isPublished !== undefined && req.user.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Only admin can change publish status'
+            });
+        }
+
+        if (subjects) result.subjects = subjects;
+        if (isPublished !== undefined) {
+            result.isPublished = isPublished;
+            if (isPublished) result.publishedAt = new Date();
+        }
+
+        await result.save();
+
+        res.json({ success: true, message: 'Result updated', result });
+    } catch (error) {
+        console.error('Update result error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/results/:id
+ * @desc    Delete result
+ * @access  Admin
+ */
+router.delete('/:id', [authMiddleware, isAdmin], async (req, res) => {
+    try {
+        const result = await Result.findById(req.params.id);
+        if (!result) {
+            return res.status(404).json({ success: false, message: 'Result not found' });
+        }
+
+        await result.deleteOne();
+        res.json({ success: true, message: 'Result deleted' });
+    } catch (error) {
+        console.error('Delete result error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/results/bulk
+ * @desc    Delete multiple results by filter
+ * @access  Admin
+ */
+router.delete('/bulk', [authMiddleware, isAdmin], async (req, res) => {
+    try {
+        const { semester, academicYear, stream } = req.body;
+
+        if (!semester || !academicYear) {
+            return res.status(400).json({
+                success: false,
+                message: 'Semester and academic year are required'
+            });
+        }
+
+        // Build filter
+        const filter = { semester, academicYear };
+
+        // If stream specified, get student IDs for that stream
+        if (stream) {
+            const students = await User.find({ role: 'student', stream });
+            filter.studentId = { $in: students.map(s => s._id) };
+        }
+
+        const result = await Result.deleteMany(filter);
+
+        res.json({
+            success: true,
+            message: `Deleted ${result.deletedCount} results`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        console.error('Bulk delete results error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;

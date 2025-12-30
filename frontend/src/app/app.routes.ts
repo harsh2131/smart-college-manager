@@ -10,6 +10,7 @@ export const routes: Routes = [
     {
         path: 'teacher',
         canActivate: [teacherGuard],
+        loadComponent: () => import('./shared/layouts/teacher-layout.component').then(m => m.TeacherLayoutComponent),
         children: [
             { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
             { path: 'dashboard', loadComponent: () => import('./features/teacher/dashboard/teacher-dashboard.component').then(m => m.TeacherDashboardComponent) },
@@ -29,6 +30,7 @@ export const routes: Routes = [
     {
         path: 'student',
         canActivate: [studentGuard],
+        loadComponent: () => import('./shared/layouts/student-layout.component').then(m => m.StudentLayoutComponent),
         children: [
             { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
             { path: 'dashboard', loadComponent: () => import('./features/student/dashboard/student-dashboard.component').then(m => m.StudentDashboardComponent) },
@@ -44,6 +46,7 @@ export const routes: Routes = [
     {
         path: 'admin',
         canActivate: [adminGuard],
+        loadComponent: () => import('./shared/layouts/admin-layout.component').then(m => m.AdminLayoutComponent),
         children: [
             { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
             { path: 'dashboard', loadComponent: () => import('./features/admin/dashboard/admin-dashboard.component').then(m => m.AdminDashboardComponent) },

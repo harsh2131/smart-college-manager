@@ -299,6 +299,8 @@ router.get('/admin/overview', [authMiddleware, isAdmin], async (req, res) => {
     try {
         // Counts
         const totalStudents = await User.countDocuments({ role: 'student', isActive: true });
+        const bcaStudents = await User.countDocuments({ role: 'student', stream: 'BCA', isActive: true });
+        const bbaStudents = await User.countDocuments({ role: 'student', stream: 'BBA', isActive: true });
         const totalTeachers = await User.countDocuments({ role: 'teacher', isActive: true });
         const totalSubjects = await Subject.countDocuments();
         const totalAssignments = await Assignment.countDocuments();
@@ -335,6 +337,8 @@ router.get('/admin/overview', [authMiddleware, isAdmin], async (req, res) => {
             success: true,
             stats: {
                 totalStudents,
+                bcaStudents,
+                bbaStudents,
                 totalTeachers,
                 totalSubjects,
                 totalAssignments,

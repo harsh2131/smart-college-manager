@@ -272,4 +272,24 @@ router.get('/admin/summary', [authMiddleware, isAdmin], async (req, res) => {
     }
 });
 
+/**
+ * @route   DELETE /api/payments/:id
+ * @desc    Delete payment record
+ * @access  Admin
+ */
+router.delete('/:id', [authMiddleware, isAdmin], async (req, res) => {
+    try {
+        const payment = await Payment.findById(req.params.id);
+        if (!payment) {
+            return res.status(404).json({ success: false, message: 'Payment not found' });
+        }
+
+        await payment.deleteOne();
+        res.json({ success: true, message: 'Payment record deleted' });
+    } catch (error) {
+        console.error('Delete payment error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;

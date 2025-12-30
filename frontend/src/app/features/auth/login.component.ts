@@ -50,24 +50,24 @@ import { AuthService } from '../../core/services/auth.service';
     </div>
   `,
   styles: [`
-    .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-    .auth-card { background: white; border-radius: 20px; padding: 2.5rem; width: 100%; max-width: 420px; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); }
-    .auth-header { text-align: center; margin-bottom: 2rem; }
-    .auth-header h1 { font-size: 1.75rem; margin-bottom: 0.5rem; color: #1e293b; }
-    .auth-header p { color: #64748b; }
-    .form-group { margin-bottom: 1.25rem; }
-    .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #1e293b; }
-    .input { width: 100%; padding: 0.875rem 1rem; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1rem; transition: border-color 0.2s; box-sizing: border-box; }
-    .input:focus { outline: none; border-color: #6366f1; }
-    .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-    .btn-primary { background: #6366f1; color: white; }
-    .btn-primary:hover { background: #4f46e5; transform: translateY(-2px); }
-    .btn-block { width: 100%; display: flex; justify-content: center; padding: 1rem; font-size: 1rem; }
-    .error-message { background: #fee2e2; color: #991b1b; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; text-align: center; }
-    .auth-footer { text-align: center; margin-top: 1.5rem; color: #64748b; }
-    .auth-footer a { color: #6366f1; font-weight: 600; text-decoration: none; }
-    .demo-credentials { margin-top: 1.5rem; padding: 1rem; background: #f1f5f9; border-radius: 8px; font-size: 0.875rem; }
-    .demo-credentials p { margin: 0.25rem 0; color: #64748b; }
+    .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; background: #f3f4f6; }
+    .auth-card { background: white; border-radius: 8px; padding: 2rem; width: 100%; max-width: 400px; border: 1px solid #e5e7eb; }
+    .auth-header { text-align: center; margin-bottom: 1.5rem; }
+    .auth-header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: #111827; }
+    .auth-header p { color: #6b7280; font-size: 0.875rem; }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; margin-bottom: 0.375rem; font-weight: 500; color: #374151; font-size: 0.875rem; }
+    .input { width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; transition: border-color 0.15s; box-sizing: border-box; }
+    .input:focus { outline: none; border-color: #2563eb; }
+    .btn { padding: 0.625rem 1.25rem; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-block { width: 100%; display: flex; justify-content: center; padding: 0.75rem; font-size: 0.875rem; }
+    .error-message { background: #fee2e2; color: #b91c1c; padding: 0.625rem; border-radius: 6px; margin-bottom: 1rem; text-align: center; font-size: 0.875rem; }
+    .auth-footer { text-align: center; margin-top: 1.25rem; color: #6b7280; font-size: 0.875rem; }
+    .auth-footer a { color: #2563eb; font-weight: 500; text-decoration: none; }
+    .demo-credentials { margin-top: 1.25rem; padding: 0.875rem; background: #f9fafb; border-radius: 6px; font-size: 0.8125rem; border: 1px solid #e5e7eb; }
+    .demo-credentials p { margin: 0.125rem 0; color: #6b7280; }
   `]
 })
 export class LoginComponent {

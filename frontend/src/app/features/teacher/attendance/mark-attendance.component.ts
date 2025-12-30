@@ -9,10 +9,11 @@ import { ApiService } from '../../../core/services/api.service';
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page-container">
-      <div class="page-header">
-        <div><a routerLink="/teacher/dashboard" class="back-link">← Dashboard</a><h1>📋 Mark Attendance</h1></div>
-      </div>
+    <div class="page">
+      <header class="page-header">
+        <h1>📋 Mark Attendance</h1>
+        <p>Record student attendance for your classes</p>
+      </header>
 
       <div class="controls card">
         <div class="control-row">
@@ -55,7 +56,7 @@ import { ApiService } from '../../../core/services/api.service';
               <div class="student-avatar" [class.present]="attendance[i] === 'present'" [class.absent]="attendance[i] === 'absent'" [class.late]="attendance[i] === 'late'">{{ student.name?.charAt(0) }}</div>
               <div>
                 <div class="student-name">{{ student.name }}</div>
-                <div class="student-roll">{{ student.rollNumber }}</div>
+                <div class="student-roll">{{ student.rollNumber || student.userId }}</div>
               </div>
             </div>
             <div class="status-buttons">
@@ -67,25 +68,20 @@ import { ApiService } from '../../../core/services/api.service';
         </div>
 
         <div class="submit-bar">
-          <div class="percentage-preview">
-            Attendance Rate: <strong>{{ getAttendanceRate() }}%</strong>
-          </div>
-          <button class="btn btn-primary btn-lg" (click)="submitAttendance()" [disabled]="submitting">
-            {{ submitting ? 'Submitting...' : 'Submit Attendance' }}
-          </button>
+          <div class="percentage-preview">Attendance Rate: <strong>{{ getAttendanceRate() }}%</strong></div>
+          <button class="btn btn-primary btn-lg" (click)="submitAttendance()" [disabled]="submitting">{{ submitting ? 'Submitting...' : 'Submit Attendance' }}</button>
         </div>
       </div>
 
-      <div *ngIf="!students.length && selectedSubject" class="empty-state card">
-        <p>No students enrolled in this subject</p>
-      </div>
+      <div *ngIf="!students.length && selectedSubject" class="empty-state card"><p>No students enrolled in this subject</p></div>
+      <div *ngIf="!selectedSubject" class="empty-state card"><p>Select a subject to view students</p></div>
     </div>
   `,
   styles: [`
-    .page-container { max-width: 1000px; margin: 0 auto; padding: 2rem; background: #f1f5f9; min-height: 100vh; }
+    .page { padding: 2rem; min-height: 100vh; }
     .page-header { margin-bottom: 1.5rem; }
-    .back-link { color: #6366f1; text-decoration: none; font-size: 0.875rem; }
-    h1 { color: #1e293b; margin: 0.5rem 0 0; }
+    .page-header h1 { font-size: 1.75rem; color: #1e293b; margin: 0 0 0.25rem; }
+    .page-header p { color: #64748b; margin: 0; }
     .card { background: white; border-radius: 16px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     .control-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; }
     .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #374151; }
@@ -128,7 +124,7 @@ import { ApiService } from '../../../core/services/api.service';
     .percentage-preview { font-size: 1.125rem; color: #64748b; }
     .percentage-preview strong { color: #1e293b; font-size: 1.5rem; }
     .empty-state { text-align: center; color: #64748b; padding: 3rem; }
-    @media (max-width: 768px) { .control-row { grid-template-columns: 1fr; } .toolbar { flex-direction: column; align-items: stretch; } .submit-bar { flex-direction: column; gap: 1rem; } }
+    @media (max-width: 768px) { .control-row { grid-template-columns: 1fr; } .toolbar { flex-direction: column; } .submit-bar { flex-direction: column; gap: 1rem; } }
   `]
 })
 export class MarkAttendanceComponent implements OnInit {
@@ -168,14 +164,12 @@ export class MarkAttendanceComponent implements OnInit {
   submitAttendance(): void {
     this.submitting = true;
     const data = {
-      subjectId: this.selectedSubject,
-      date: this.attendanceDate,
-      lectureNumber: this.lectureNumber,
+      subjectId: this.selectedSubject, date: this.attendanceDate, lectureNumber: this.lectureNumber,
       attendanceData: this.students.map((s, i) => ({ studentId: s._id, status: this.attendance[i] }))
     };
     this.apiService.markAttendance(data).subscribe({
       next: () => { this.submitting = false; alert('Attendance marked successfully!'); this.students = []; this.selectedSubject = ''; },
-      error: (err: any) => { this.submitting = false; alert(err.error?.message || 'Error marking attendance'); }
+      error: (err: any) => { this.submitting = false; alert(err.error?.message || 'Error'); }
     });
   }
 }

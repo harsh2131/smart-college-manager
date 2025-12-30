@@ -178,4 +178,103 @@ router.get('/low-attendance/:subjectId', [authMiddleware, isTeacher], async (req
     }
 });
 
+/**
+ * @route   PUT /api/attendance/:id
+ * @desc    Update individual attendance record
+ * @access  Teacher
+ */
+router.put('/:id', [authMiddleware, isTeacher], async (req, res) => {
+    try {
+        const { status } = req.body;
+
+        if (!status || !['present', 'absent', 'late'].includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid status (present, absent, late) is required'
+            });
+        }
+
+        const attendance = await Attendance.findById(req.params.id);
+        if (!attendance) {
+            return res.status(404).json({ success: false, message: 'Attendance record not found' });
+        }
+
+        // Verify teacher owns the subject
+        const subject = await Subject.findById(attendance.subjectId);
+        if (!subject || subject.teacherId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this record' });
+        }
+
+        attendance.status = status;
+        await attendance.save();
+
+        res.json({ success: true, message: 'Attendance updated', attendance });
+    } catch (error) {
+        console.error('Update attendance error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/attendance/:id
+ * @desc    Delete individual attendance record
+ * @access  Teacher
+ */
+router.delete('/:id', [authMiddleware, isTeacher], async (req, res) => {
+    try {
+        const attendance = await Attendance.findById(req.params.id);
+        if (!attendance) {
+            return res.status(404).json({ success: false, message: 'Attendance record not found' });
+        }
+
+        // Verify teacher owns the subject
+        const subject = await Subject.findById(attendance.subjectId);
+        if (!subject || subject.teacherId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to delete this record' });
+        }
+
+        await attendance.deleteOne();
+        res.json({ success: true, message: 'Attendance record deleted' });
+    } catch (error) {
+        console.error('Delete attendance error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/attendance/subject/:subjectId/date/:date
+ * @desc    Delete all attendance records for a subject on a specific date
+ * @access  Teacher
+ */
+router.delete('/subject/:subjectId/date/:date', [authMiddleware, isTeacher], async (req, res) => {
+    try {
+        const { subjectId, date } = req.params;
+
+        // Verify teacher owns the subject
+        const subject = await Subject.findById(subjectId);
+        if (!subject || subject.teacherId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        const attendanceDate = new Date(date);
+        attendanceDate.setHours(0, 0, 0, 0);
+        const nextDay = new Date(attendanceDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+
+        const result = await Attendance.deleteMany({
+            subjectId,
+            date: { $gte: attendanceDate, $lt: nextDay }
+        });
+
+        res.json({
+            success: true,
+            message: `Deleted ${result.deletedCount} attendance records`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        console.error('Delete attendance by date error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;

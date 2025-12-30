@@ -112,4 +112,89 @@ router.put('/:id/grade', [authMiddleware, isTeacher], async (req, res) => {
     }
 });
 
+/**
+ * @route   PUT /api/submissions/:id
+ * @desc    Update submission (resubmit)
+ * @access  Student (own submission, before grading)
+ */
+router.put('/:id', [authMiddleware, isStudent], async (req, res) => {
+    try {
+        const submission = await Submission.findById(req.params.id);
+
+        if (!submission) {
+            return res.status(404).json({ success: false, message: 'Submission not found' });
+        }
+
+        // Verify ownership
+        if (submission.studentId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        // Check if already graded
+        if (submission.marks !== null && submission.marks !== undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot update a graded submission'
+            });
+        }
+
+        const { fileUrl, originalName, fileSize, fileType } = req.body;
+
+        if (fileUrl) submission.fileUrl = fileUrl;
+        if (originalName) submission.originalName = originalName;
+        if (fileSize) submission.fileSize = fileSize;
+        if (fileType) submission.fileType = fileType;
+        submission.submittedAt = new Date(); // Update submission time
+
+        await submission.save();
+
+        res.json({ success: true, message: 'Submission updated', submission });
+    } catch (error) {
+        console.error('Update submission error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/submissions/:id
+ * @desc    Delete submission
+ * @access  Student (own, before grading) or Teacher
+ */
+router.delete('/:id', [authMiddleware, isTeacherOrStudent], async (req, res) => {
+    try {
+        const submission = await Submission.findById(req.params.id)
+            .populate('assignmentId');
+
+        if (!submission) {
+            return res.status(404).json({ success: false, message: 'Submission not found' });
+        }
+
+        // Authorization check
+        if (req.user.role === 'student') {
+            // Students can only delete their own ungraded submissions
+            if (submission.studentId.toString() !== req.user._id.toString()) {
+                return res.status(403).json({ success: false, message: 'Not authorized' });
+            }
+            if (submission.marks !== null && submission.marks !== undefined) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot delete a graded submission'
+                });
+            }
+        } else if (req.user.role === 'teacher') {
+            // Teachers can delete submissions for their assignments
+            const assignment = await Assignment.findById(submission.assignmentId);
+            if (!assignment || assignment.createdBy.toString() !== req.user._id.toString()) {
+                return res.status(403).json({ success: false, message: 'Not authorized' });
+            }
+        }
+
+        await submission.deleteOne();
+        res.json({ success: true, message: 'Submission deleted' });
+    } catch (error) {
+        console.error('Delete submission error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;

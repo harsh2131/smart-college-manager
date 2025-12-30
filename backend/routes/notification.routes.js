@@ -83,6 +83,51 @@ router.post('/', authMiddleware, async (req, res) => {
 });
 
 /**
+ * @route   DELETE /api/notifications/:id
+ * @desc    Delete a notification
+ * @access  Authenticated (own notifications)
+ */
+router.delete('/:id', authMiddleware, async (req, res) => {
+    try {
+        const notification = await Notification.findById(req.params.id);
+
+        if (!notification) {
+            return res.status(404).json({ success: false, message: 'Notification not found' });
+        }
+
+        // Ensure user can only delete their own notifications
+        if (notification.userId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        await notification.deleteOne();
+        res.json({ success: true, message: 'Notification deleted' });
+    } catch (error) {
+        console.error('Delete notification error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * @route   DELETE /api/notifications/clear-all
+ * @desc    Delete all notifications for the user
+ * @access  Authenticated
+ */
+router.delete('/clear-all', authMiddleware, async (req, res) => {
+    try {
+        const result = await Notification.deleteMany({ userId: req.user._id });
+        res.json({
+            success: true,
+            message: `Deleted ${result.deletedCount} notifications`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        console.error('Clear notifications error:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
  * Helper function to create and send notification
  * Can be called from other routes
  */

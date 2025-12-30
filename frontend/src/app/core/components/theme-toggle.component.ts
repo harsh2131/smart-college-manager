@@ -20,36 +20,26 @@ import { ThemeService } from '../services/theme.service';
     `,
     styles: [`
         .theme-toggle {
-            background: var(--bg-secondary, #f1f5f9);
-            border: 1px solid var(--border-color, #e2e8f0);
-            border-radius: 12px;
-            padding: 0.625rem;
+            background: var(--bg-secondary, #f3f4f6);
+            border: 1px solid var(--border-color, #e5e7eb);
+            border-radius: 6px;
+            padding: 0.5rem;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: background 0.15s;
             display: flex;
             align-items: center;
             justify-content: center;
-            min-width: 44px;
-            min-height: 44px;
+            min-width: 40px;
+            min-height: 40px;
         }
         
         .theme-toggle:hover {
-            background: var(--bg-hover, #e2e8f0);
-            transform: scale(1.05);
-        }
-        
-        .theme-toggle:active {
-            transform: scale(0.95);
+            background: var(--bg-hover, #e5e7eb);
         }
         
         .theme-icon {
-            font-size: 1.25rem;
+            font-size: 1.125rem;
             line-height: 1;
-            transition: transform 0.3s ease;
-        }
-        
-        .theme-toggle:hover .theme-icon {
-            transform: rotate(15deg);
         }
     `]
 })

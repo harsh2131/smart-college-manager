@@ -7,6 +7,7 @@ const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Submission = require('../models/Submission');
 const Notification = require('../models/Notification');
+const Fee = require('../models/Fee');
 
 const connectDB = async () => {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/college_manager');
@@ -24,7 +25,8 @@ const seedDatabase = async () => {
             Attendance.deleteMany({}),
             Assignment.deleteMany({}),
             Submission.deleteMany({}),
-            Notification.deleteMany({})
+            Notification.deleteMany({}),
+            Fee.deleteMany({})
         ]);
         console.log('🗑️  Cleared existing data');
 
@@ -381,6 +383,108 @@ const seedDatabase = async () => {
         console.log(`🔔 Created ${notifications.length} notifications`);
 
         // ============================================
+        // CREATE FEE STRUCTURES
+        // ============================================
+        const currentYear = new Date().getFullYear();
+        const academicYear = `${currentYear}-${(currentYear + 1).toString().slice(-2)}`;
+
+        const feeStructures = await Fee.insertMany([
+            // BCA Fee Structures
+            {
+                stream: 'BCA',
+                semester: 1,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 25000,
+                    examFee: 2000,
+                    libraryFee: 1500,
+                    labFee: 3000,
+                    otherFee: 1000
+                },
+                totalAmount: 32500,
+                dueDate: new Date(currentYear, 6, 15), // July 15
+                description: 'BCA Semester 1 Fee - Includes admission charges'
+            },
+            {
+                stream: 'BCA',
+                semester: 3,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 22000,
+                    examFee: 2000,
+                    libraryFee: 1500,
+                    labFee: 3500,
+                    otherFee: 500
+                },
+                totalAmount: 29500,
+                dueDate: new Date(currentYear, 6, 15),
+                description: 'BCA Semester 3 Fee'
+            },
+            {
+                stream: 'BCA',
+                semester: 5,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 22000,
+                    examFee: 2500,
+                    libraryFee: 1500,
+                    labFee: 4000,
+                    otherFee: 500
+                },
+                totalAmount: 30500,
+                dueDate: new Date(currentYear, 6, 15),
+                description: 'BCA Semester 5 Fee - Includes project lab charges'
+            },
+            // BBA Fee Structures
+            {
+                stream: 'BBA',
+                semester: 1,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 28000,
+                    examFee: 2000,
+                    libraryFee: 1500,
+                    labFee: 1000,
+                    otherFee: 1500
+                },
+                totalAmount: 34000,
+                dueDate: new Date(currentYear, 6, 15),
+                description: 'BBA Semester 1 Fee - Includes admission charges'
+            },
+            {
+                stream: 'BBA',
+                semester: 3,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 25000,
+                    examFee: 2000,
+                    libraryFee: 1500,
+                    labFee: 1000,
+                    otherFee: 500
+                },
+                totalAmount: 30000,
+                dueDate: new Date(currentYear, 6, 15),
+                description: 'BBA Semester 3 Fee'
+            },
+            {
+                stream: 'BBA',
+                semester: 5,
+                academicYear,
+                feeBreakdown: {
+                    tuitionFee: 25000,
+                    examFee: 2500,
+                    libraryFee: 1500,
+                    labFee: 1500,
+                    otherFee: 1000
+                },
+                totalAmount: 31500,
+                dueDate: new Date(currentYear, 6, 15),
+                description: 'BBA Semester 5 Fee - Includes internship charges'
+            }
+        ]);
+        console.log(`💰 Created ${feeStructures.length} fee structures`);
+
+        // ============================================
         // SUMMARY
         // ============================================
         console.log('\n' + '='.repeat(60));
@@ -411,6 +515,7 @@ const seedDatabase = async () => {
         console.log(`   • ${assignments.length} Assignments`);
         console.log(`   • ${submissions.length} Submissions`);
         console.log(`   • ${notifications.length} Notifications`);
+        console.log(`   • ${feeStructures.length} Fee Structures`);
         console.log('\n' + '='.repeat(60));
 
         process.exit(0);

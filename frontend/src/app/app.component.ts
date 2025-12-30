@@ -8,4 +8,6 @@ import { RouterOutlet } from '@angular/router';
   template: `<router-outlet></router-outlet>`,
   styles: [`:host { display: block; min-height: 100vh; }`]
 })
-export class AppComponent { }
+export class AppComponent {
+  name ="harsh"
+ }
